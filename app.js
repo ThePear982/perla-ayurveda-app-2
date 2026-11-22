@@ -11,12 +11,12 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
+  apiKey: "AIzaSyAqIArLBFpdTsNZDUSWuoWkjyrkrBKc8Gs",
   authDomain: "perla-ayurveda.firebaseapp.com",
   projectId: "perla-ayurveda",
   storageBucket: "perla-ayurveda.firebasestorage.app",
   messagingSenderId: "19756679359",
-  appId: "TU_APP_ID",
+  appId: "1:19756679359:web:65a56a5665bb1c0831060a",
 };
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
