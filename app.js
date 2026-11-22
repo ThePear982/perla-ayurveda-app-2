@@ -330,6 +330,72 @@ function importarTexto(txt) {
   return res;
 }
 
+// ---------- IMPORTAR SERVICIOS Y PAQUETES DESDE LA HOJA ----------
+const aNumero = (t) => { const n = parseFloat(String(t || "").replace(/[^\d.,-]/g, "").replace(",", ".")); return isNaN(n) ? NaN : n; };
+
+// Servicios: columnas TRATAMIENTOS y COSTOS (la hoja DATOS). Los paquetes se omiten aquí.
+function importarServicios(txt) {
+  const filas = parseCSV(txt, txt.includes("\t") ? "\t" : ",");
+  const hi = filas.findIndex((f) => f.some((c) => /trat|servicio/.test(norm(c))) && f.some((c) => /costo|precio/.test(norm(c))));
+  const cab = hi >= 0 ? filas[hi].map(norm) : [];
+  const a = hi >= 0 ? cab.findIndex((h) => /trat|servicio/.test(h)) : 0;
+  const b = hi >= 0 ? cab.findIndex((h) => /costo|precio/.test(h)) : 1;
+  const lista = hi >= 0 ? filas.slice(hi + 1) : filas;
+  let nuevos = 0; const omitidos = [];
+  lista.forEach((f) => {
+    const nombre = String(f[a] || "").trim().replace(/\s+/g, " ");
+    if (!nombre || /sesion|paquete/i.test(nombre)) return;
+    const precio = aNumero(f[b]);
+    if (isNaN(precio)) { omitidos.push(nombre + " (sin precio)"); return; }
+    if (D.servicios.some((s) => norm(s.nombre) === norm(nombre))) return;
+    D.servicios.push({ id: uid(), nombre, precio, duracion: D.ajustes.duracionDefault });
+    nuevos++;
+  });
+  return { nuevos, omitidos };
+}
+
+// Paquetes: filas cuyo nombre trae las sesiones, p. ej. "PAQUETE TERAPIA (11 SESIONES)"
+function importarPaquetes(txt) {
+  const filas = parseCSV(txt, txt.includes("\t") ? "\t" : ",");
+  let nuevos = 0; const omitidos = [];
+  filas.forEach((f) => {
+    const original = String(f[0] || "").trim().replace(/\s+/g, " ");
+    const m = original.match(/(\d+)\s*SESIONES?/i);
+    if (!m) return;
+    const sesiones = +m[1];
+    const nombre = original.replace(/\(?\s*\d+\s*SESIONES?\s*\)?/i, "").replace(/\s+/g, " ").trim();
+    const precio = aNumero(f[1]);
+    if (isNaN(precio) || precio <= 0 || precio >= 10000) { omitidos.push(original + " (precio: " + (f[1] || "vacío") + ")"); return; }
+    if (D.paquetes.some((p) => norm(p.nombre) === norm(nombre) && +p.sesiones === sesiones)) return;
+    D.paquetes.push({ id: uid(), nombre, sesiones, precio });
+    nuevos++;
+  });
+  return { nuevos, omitidos };
+}
+
+function ejecutarImport(k, txt) {
+  const r = k === "srv" ? importarServicios(txt) : importarPaquetes(txt);
+  guardar();
+  aviso(r.nuevos + (k === "srv" ? " servicios nuevos" : " paquetes nuevos") + (r.omitidos.length ? " · " + r.omitidos.length + " omitidos" : ""));
+  if (r.omitidos.length) alert("Estos no se importaron:\n\n" + r.omitidos.slice(0, 10).join("\n") + (r.omitidos.length > 10 ? "\n…" : ""));
+  render();
+}
+
+const importHTML = (k) => {
+  const ok = puede(k === "srv" ? "servicios" : "paquetes");
+  if (!ok) return "";
+  const cosa = k === "srv" ? "servicios" : "paquetes";
+  const ayuda = k === "srv"
+    ? "Usa las columnas TRATAMIENTOS y COSTOS de la hoja DATOS."
+    : "Usa la lista de paquetes de la hoja DATOS: el nombre con las sesiones entre paréntesis y el precio al lado.";
+  return `<details class="caja"><summary>Importar ${cosa} desde la hoja</summary>
+    <p class="muted">${ayuda} Descarga la hoja como CSV (Archivo → Descargar → CSV) o pega las filas copiadas.</p>
+    <input type="file" data-impfile="${k}" accept=".csv,text/csv,text/plain">
+    <textarea id="imp-${k}" placeholder="Pega aquí las filas copiadas de la hoja"></textarea>
+    <button type="button" class="btn" data-imp="${k}" style="margin-top:8px">Importar lo pegado</button>
+    <p class="msg" id="impmsg-${k}"></p></details>`;
+};
+
 /* ---------- CONSULTAS ---------- */
 const C = (id) => D.clientes.find((c) => c.id === id) || { nombre: "(cliente eliminado)", dni: "", telefono: "" };
 const S = (id) => D.servicios.find((s) => s.id === id) || { nombre: "(servicio eliminado)", precio: 0 };
@@ -792,7 +858,8 @@ const vistas = {
       <button class="btn">Guardar servicio</button>
     </form>
     <input class="buscador" id="buscarSrv" placeholder="Buscar servicio…" value="${esc(textoSrv)}" autocomplete="off">
-    <div class="caja" id="listaSrv">${listaSrvHTML()}</div>`;
+    <div class="caja" id="listaSrv">${listaSrvHTML()}</div>
+    ${importHTML("srv")}`;
   },
 
   paquetes() {
@@ -812,6 +879,7 @@ const vistas = {
     <div class="caja">${ventas.length ? ventas.map(filaVenta).join("") : '<div class="vacio">Aún no hay paquetes vendidos.</div>'}</div>
 
     <div class="seccion"><h2>Catálogo de paquetes</h2>
+    ${importHTML("paq")}
     <details class="caja"><summary>+ Crear paquete</summary>
       <form class="form" id="fPaq">
         <label>Nombre<input name="nombre" required></label>
@@ -1640,6 +1708,13 @@ document.addEventListener("click", (e) => {
   if (q("[data-sync]")) { sincronizarFormulario(true); return; }
   if (q("[data-irconfig]")) { pestanaActual = "configuracion"; cfgTab = "ajustes"; render(); return; }
   if (q("[data-agendarcli]")) { if (puede("citas")) abrirNueva({ cli: q("[data-agendarcli]").dataset.agendarcli }); return; }
+  if (q("[data-imp]")) {
+    const k = q("[data-imp]").dataset.imp, txt = ($("#imp-" + k).value || "").trim(), msg = $("#impmsg-" + k);
+    if (!txt) { msg.className = "msg"; msg.textContent = "Pega primero las filas o elige un archivo."; return; }
+    try { ejecutarImport(k, txt); }
+    catch (err) { msg.className = "error msg"; msg.textContent = err.message; }
+    return;
+  }
   if (q("[data-imptexto]")) {
     const txt = ($("#impTexto").value || "").trim(), msg = $("#impMsg");
     if (!txt) { msg.textContent = "Pega primero las filas."; return; }
@@ -1651,6 +1726,13 @@ document.addEventListener("change", async (e) => {
   if (e.target.id !== "impCSV" || !e.target.files[0]) return;
   try { const r = importarTexto(await e.target.files[0].text()); aviso(r.nuevos + " pacientes nuevos agregados"); render(); }
   catch (err) { const m = $("#impMsg"); if (m) { m.className = "error msg"; m.textContent = err.message; } }
+});
+
+document.addEventListener("change", async (e) => {
+  const k = e.target.dataset && e.target.dataset.impfile;
+  if (!k || !e.target.files[0]) return;
+  try { ejecutarImport(k, await e.target.files[0].text()); }
+  catch (err) { const m = $("#impmsg-" + k); if (m) { m.className = "error msg"; m.textContent = err.message; } }
 });
 
 // Lectura automática: al abrir, cada tantos minutos y al volver a la pestaña
