@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Perla Ayurveda · Fisioterapia</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <section id="login" hidden>
+    <div class="login-caja">
+      <h1 id="loginTitulo">Iniciar sesión</h1>
+      <p id="loginAyuda" class="muted">Ingresa con tu correo y contraseña.</p>
+      <form id="formLogin">
+        <label>Correo electrónico
+          <input id="inUsuario" type="email" autocomplete="username" required>
+        </label>
+        <label>Contraseña
+          <input id="inClave" type="password" autocomplete="current-password" minlength="6" required>
+        </label>
+        <p id="loginError" class="error"></p>
+        <button class="btn" id="loginBoton" type="submit">Entrar</button>
+      </form>
+    </div>
+  </section>
+
+  <div id="panel" hidden>
+    <header>
+      <div>
+        <h1>Perla Ayurveda · Fisioterapia</h1>
+        <p id="hoy"></p>
+        <p id="quien"></p>
+      </div>
+      <div class="cobro">
+        <button class="btn secundario" id="btnMiClave">Mi contraseña</button>
+        <button class="btn secundario" id="btnSalir">Cerrar sesión</button>
+      </div>
+    </header>
+    <nav id="nav"></nav>
+    <main id="app"></main>
+    <button class="btn fab" id="btnNueva">+ Nueva cita</button>
+  </div>
+
+  <div id="modal" class="modal-fondo" hidden></div>
+  <div id="aviso" hidden></div>
+  <div id="hojaImpresion"></div>
+
+  <!-- Ya no se usa data.js: los datos viven en Firestore -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>
