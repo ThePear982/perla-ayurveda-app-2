@@ -1076,7 +1076,7 @@ function latirSala() {
   const l = $("#salaLinea"), r = salaRango(), m = minutosAhora();
   if (l) {
     l.hidden = m < r.ini || m > r.fin;
-    l.style.top = ((m - r.ini) / (r.fin - r.ini)) * 100 + "%";
+    l.style.left = "calc(130px + (100% - 130px) * " + (m - r.ini) / (r.fin - r.ini) + ")";
   }
 }
 
@@ -1252,7 +1252,7 @@ const vistas = {
 };
 vistas.sala = function () {
   const h = hoy(), recs = D.ajustes.recursos, r = salaRango(), total = r.fin - r.ini;
-  const pos = (m) => ((m - r.ini) / total) * 100;
+  const pct = (m) => ((m - r.ini) / total) * 100;
   const ahora = minutosAhora();
   const citas = citasDe(h);
   const colDe = (c) => (recs.includes(c.recurso) ? c.recurso : recs[0]);
@@ -1265,10 +1265,11 @@ vistas.sala = function () {
 
   const bloque = (c) => {
     const dur = durSrv(c.servicioId);
-    return `<button type="button" class="blq ${c.estado}" data-sdet="${c.id}" style="top:${pos(aMin(c.hora))}%;height:${(dur / total) * 100}%">
+    return `<button type="button" class="blq ${c.estado}" data-sdet="${c.id}" style="left:${pct(aMin(c.hora))}%;width:${(dur / total) * 100}%;right:auto;top:8px;bottom:8px;justify-content:center">
       <strong>${esc(C(c.pacienteId).nombre)}</strong>
       <span>${hora12(c.hora)} · ${dur} min</span>
-      ${dur >= 60 ? `<span>${esc(S(c.servicioId).nombre)}${c.ventaId ? " · Paquete" : ""}</span><em>${ESTADO[c.estado]}</em>` : ""}
+      <span>${esc(S(c.servicioId).nombre)}${c.ventaId ? " · Paquete" : ""}</span>
+      <em>${ESTADO[c.estado]}</em>
     </button>`;
   };
 
@@ -1280,6 +1281,20 @@ vistas.sala = function () {
     ? enCurso.map((c) => `${esc(C(c.pacienteId).nombre)} (${esc(colDe(c))})`).join(" · ")
     : "Ninguna";
 
+  const cabecera = `<div style="display:grid;grid-template-columns:130px 1fr;background:var(--soft)">
+      <div></div>
+      <div style="position:relative;height:36px">
+        ${horas.map((m) => `<span style="position:absolute;top:9px;left:${pct(m)}%;transform:translateX(-50%);font-size:14px;font-weight:700;color:var(--muted)">${hora12(aHora(m))}</span>`).join("")}
+      </div>
+    </div>`;
+  const filas = recs.map((x) => `<div style="display:grid;grid-template-columns:130px 1fr;border-top:1px solid var(--line)">
+      <div style="padding:14px 12px;font-weight:700;color:var(--primary)">${esc(x)}</div>
+      <div style="position:relative;height:110px">
+        ${horas.map((m) => `<i style="position:absolute;top:0;bottom:0;left:${pct(m)}%;border-left:1px dashed var(--line)"></i>`).join("")}
+        ${citas.filter((c) => colDe(c) === x).map(bloque).join("")}
+      </div>
+    </div>`).join("");
+
   return `<div class="sala">
     <div class="sala-top">
       <div><h2>${esc(D.ajustes.clinica)} · Agenda de hoy</h2>
@@ -1288,15 +1303,11 @@ vistas.sala = function () {
       <button type="button" class="btn secundario" data-fullscreen="1">Pantalla completa</button>
     </div>
     <div class="sala-prox">${txtProx}<small>En curso: ${txtCurso}</small></div>
-    <div class="sala-wrap" style="--n:${recs.length}">
-      <div class="sala-cab"><div></div>${recs.map((x) => `<div>${esc(x)}</div>`).join("")}</div>
-      <div class="sala-cuerpo">
-        <div class="sala-horas">${horas.map((m) => `<span style="top:${pos(m)}%">${hora12(aHora(m))}</span>`).join("")}</div>
-        ${recs.map((x) => `<div class="sala-col">
-          ${horas.map((m) => `<i class="hl" style="top:${pos(m)}%"></i>`).join("")}
-          ${citas.filter((c) => colDe(c) === x).map(bloque).join("")}
-        </div>`).join("")}
-        <div class="ahora-linea" id="salaLinea" hidden></div>
+    <div class="sala-wrap" style="overflow-x:auto">
+      <div style="min-width:900px;position:relative">
+        ${cabecera}
+        ${filas}
+        <div id="salaLinea" hidden style="position:absolute;top:0;bottom:0;width:3px;background:#e0245e;z-index:3;pointer-events:none;left:130px"></div>
       </div>
     </div>
     <div class="sala-leyenda">
@@ -1513,12 +1524,17 @@ function dibujarModal() {
       : `<input id="ncBusca" class="buscador" placeholder="Buscar por nombre, DNI o teléfono" value="${esc(nc.q)}" autocomplete="off">
          <div id="ncRes">${resCli()}</div>`}
 
+    ${deudaHTML()}
     <h3>2. Servicio</h3>
     <input id="ncBuscaSrv" class="buscador" placeholder="Buscar servicio (ej. masaje, terapia…)" value="${esc(nc.qs)}" autocomplete="off">
     <div id="ncResSrv">${resSrv()}</div>
     <p class="muted">Elegido: <strong>${esc(srv.nombre)}</strong> · ${durSrv(nc.srv)} min</p>
 
-    ${v ? "" : `<label style="max-width:180px;margin-top:8px">Costo (S/)<input id="ncPrecio" type="number" min="0" step="0.5" value="${nc.precio}"></label>`}
+    ${v ? "" : `<div class="form" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
+      <label>Costo (S/)<input id="ncPrecio" type="number" min="0" step="0.5" value="${nc.precio}"></label>
+      <label>Descuento (S/)<input id="ncDesc" type="number" min="0" step="0.5" value="${nc.desc || 0}"></label>
+      <div><strong id="ncTotal">Total a cobrar: ${soles(Math.max(0, (+nc.precio || 0) - (+nc.desc || 0)))}</strong></div>
+    </div>`}
 
     ${vs.length ? `<h3>3. Cobro</h3>
       <div class="opciones">${chip("data-nccobro", "", "Pago individual", !nc.ventaId)}
@@ -1551,7 +1567,7 @@ function agendar() {
   const v = D.ventas.find((x) => x.id === nc.ventaId);
   const dur = durSrv(nc.srv);
   const base = { pacienteId: nc.cli, servicioId: nc.srv, hora: nc.hora, ventaId: v ? v.id : "",
-    precio: v ? 0 : +nc.precio || 0, estado: "pendiente" };
+    precio: v ? 0 : Math.max(0, (+nc.precio || 0) - (+nc.desc || 0)), descuento: v ? 0 : +nc.desc || 0, estado: "pendiente" };
   let n = 1;
   if (v && nc.bloque) {
     const p = planBloque(v);
@@ -1599,10 +1615,28 @@ function abrirMiClave() {
 }
 
 /* ---------- HOY, MAÑANA E IMPRESIÓN ---------- */
+// Deuda de paquetes del paciente seleccionado en Nueva cita
+function deudaHTML() {
+  if (!nc || !nc.cli) return "";
+  const debe = D.ventas.filter((v) => v.pacienteId === nc.cli && saldoDe(v) > 0);
+  if (!debe.length) return "";
+  const tot = debe.reduce((t, v) => t + saldoDe(v), 0);
+  return `<div class="caja" style="border-color:#b0306a;background:#fbe7f0">
+    <strong style="color:#b0306a">Esta persona debe ${soles(tot)}</strong>
+    ${debe.map((v) => `<div class="muted">${esc(v.nombre)} · debe ${soles(saldoDe(v))} · compró el ${fCorta(v.fecha)}</div>`).join("")}
+  </div>`;
+}
+
+function actualizaTotal() {
+  const el = $("#ncTotal");
+  if (el) el.textContent = "Total a cobrar: " + soles(Math.max(0, (+nc.precio || 0) - (+nc.desc || 0)));
+}
+
 // ---------- SERVICIOS ANTIGUOS (sección propia) ----------
 let antFecha = hoy(), antPac = "", antNombre = "", antBusca = "", antTipo = "sesion", antSrv = "", antSrvBusca = "",
   antPaq = "", antPaqBusca = "", antCosto = "", antPago = "Efectivo", antVenta = "";
 const PAGOS_ANT = ["Efectivo", "Yape", "Plin", "Transferencia", "Tarjeta"];
+let antHora = "";
 
 function antResHTML() {
   const q = norm(antBusca.trim());
@@ -1644,7 +1678,7 @@ function guardarAntiguo() {
     const v = antVenta ? D.ventas.find((x) => x.id === antVenta) : null;
     if (v && restantes(v) <= 0) { alert("Ese paquete ya no tiene sesiones libres."); return; }
     const monto = v ? 0 : (antCosto === "" ? srv.precio : (+antCosto || 0));
-    const reg = { id: uid(), fecha: antFecha, servicio: srv.nombre, tipo: "terapia", total: monto,
+    const reg = { id: uid(), fecha: antFecha, hora: antHora, servicio: srv.nombre, tipo: "terapia", total: monto,
       pago: v ? "Paquete" : antPago, obs: "" };
     if (pac) reg.pacienteId = pac.id; else reg.nombre = antNombre;
     if (v) reg.ventaId = v.id;
@@ -1696,6 +1730,7 @@ vistas.antiguos = function () {
   return `<h2>Servicios antiguos</h2>
     <div class="form" style="grid-template-columns:260px 1fr;align-items:center">
       <label>Fecha de los servicios<input type="date" id="antFecha" value="${antFecha}"></label>
+      <label>Hora<input type="time" id="antHora" value="${antHora}"></label>
       <p class="muted">La fecha se queda igual para todos los pacientes de ese día. Cámbiala solo cuando pases a otro día.</p>
     </div>
     <section class="caja">
@@ -1706,7 +1741,7 @@ vistas.antiguos = function () {
     </section>
     <section class="caja"><h3>Registrados el ${fDia(antFecha)} · ${dia.length} · ${soles(tot)}</h3>
       ${dia.length ? dia.slice(0, 60).map((a) => `<div class="fila"><div class="crece"><strong>${esc(nombreAt(a))}</strong>
-        <div class="muted">${esc(a.servicio || "")} · ${a.ventaId ? "Sesión de paquete" : esc(a.pago || "")}</div></div>
+        <div class="muted">${a.hora ? hora12(a.hora) + " · " : ""}${esc(a.servicio || "")} · ${a.ventaId ? "Sesión de paquete" : esc(a.pago || "")}</div></div>
         <span class="monto">${a.total ? soles(a.total) : "—"}</span>
         <button type="button" class="btn peligro" data-delant="${a.id}">Quitar</button></div>`).join("")
         : '<div class="vacio">Aún no has registrado servicios para este día.</div>'}
@@ -2014,10 +2049,12 @@ document.addEventListener("input", (e) => {
   if (t.id === "antSrvBusca") { antSrvBusca = t.value; $("#antSrvRes").innerHTML = antSrvResHTML(); return; }
   if (t.id === "antPaqBusca") { antPaqBusca = t.value; $("#antPaqRes").innerHTML = antPaqResHTML(); return; }
   if (t.id === "antCosto") { antCosto = t.value; return; }
+  if (t.id === "antHora") { antHora = t.value; return; }
   if (!nc) return;
   if (t.id === "ncBusca") { nc.q = t.value; $("#ncRes").innerHTML = resCli(); }
   else if (t.id === "ncBuscaSrv") { nc.qs = t.value; $("#ncResSrv").innerHTML = resSrv(); }
-  else if (t.id === "ncPrecio") nc.precio = t.value;
+  else if (t.id === "ncPrecio") { nc.precio = t.value; actualizaTotal(); }
+  else if (t.id === "ncDesc") { nc.desc = t.value; actualizaTotal(); }
 });
 
 document.addEventListener("change", (e) => {
