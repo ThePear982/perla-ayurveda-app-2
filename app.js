@@ -399,10 +399,31 @@ const horaFrac = (x) => {
   return pad(Math.floor(m / 60)) + ":" + pad(m % 60);
 };
 
+// Busca el precio en la lista por nombre parecido (ignora palabras comunes)
+const palabrasDe = (t) => new Set(norm(t).replace(/\(.*?\)/g, " ").replace(/[^a-z0-9 ]/g, " ").split(/\s+/)
+  .filter((w) => w.length > 2 && !["paquete", "paquetes", "sesion", "sesiones", "tratamiento", "terapia", "para", "con", "del", "los", "las"].includes(w)));
+function mejorPrecio(nombre, lista) {
+  const A = palabrasDe(nombre);
+  if (!A.size) return null;
+  let mejor = null, puntaje = 0;
+  lista.forEach((x) => {
+    const B = palabrasDe(x.nombre);
+    if (!B.size) return;
+    const inter = [...A].filter((w) => B.has(w)).length;
+    const p = inter / new Set([...A, ...B]).size;
+    if (p > puntaje) { puntaje = p; mejor = x; }
+  });
+  return puntaje >= 0.5 ? mejor : null;
+}
+
 function importarSerial(txt) {
   const lineas = txt.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const existentes = new Set(D.atenciones.map((a) => [a.fecha, norm(a.pacienteId ? C(a.pacienteId).nombre : (a.nombre || "")), norm(a.servicio), +a.total || 0].join("|")));
   let nuevos = 0, vinculados = 0, noImportadas = 0; const omitidos = [];
+  // Paquetes ya cobrados por paciente (existentes y de esta importación)
+  const pagados = new Set(D.atenciones.filter((a) => +a.total > 0)
+    .map((a) => (a.pacienteId || norm(a.nombre)) + "|" + norm(a.servicio)));
+  const sinPrecio = new Set();
   lineas.forEach((l) => {
     const m = l.match(/^"?(\d{5})"?\s*,(.*)$/);
     if (!m) return;
@@ -416,11 +437,19 @@ function importarSerial(txt) {
     const fecha = serialISO(+m[1]);
     const cli = (dni && D.clientes.find((c) => c.dni === dni)) || D.clientes.find((c) => norm(c.nombre) === norm(nombre)) || null;
     const srv = tratamiento || "TERAPIA";
-    const sv = D.servicios.find((x) => norm(x.nombre) === norm(srv));
-    const total = sv ? +sv.precio || 0 : 0;
+    const esPaq = /sesion/i.test(srv);
+    const ref = mejorPrecio(srv, esPaq ? D.paquetes : D.servicios);
+    const precioLista = ref ? +ref.precio || 0 : 0;
+    if (!ref && tratamiento) sinPrecio.add(srv);
+    const clave2 = (cli ? cli.id : norm(nombre)) + "|" + norm(srv);
+    let total = precioLista, pago = "";
+    if (esPaq && precioLista > 0) {
+      if (pagados.has(clave2)) { total = 0; pago = "Paquete"; }
+      else pagados.add(clave2);
+    }
     const k = [fecha, norm(cli ? cli.nombre : nombre), norm(srv), total].join("|");
     if (existentes.has(k)) return;
-    const reg = { id: uid(), fecha, servicio: srv, tipo: /compra/i.test(srv) ? "compra" : "terapia", total, pago: "",
+    const reg = { id: uid(), fecha, servicio: srv, tipo: /compra/i.test(srv) ? "compra" : "terapia", total, pago,
       obs: "Horario " + horaFrac(hora) + (tratamiento ? "" : " · tratamiento no anotado") };
     if (cli) { reg.pacienteId = cli.id; vinculados++; } else reg.nombre = nombre;
     D.atenciones.push(reg);
@@ -428,6 +457,7 @@ function importarSerial(txt) {
     nuevos++;
   });
   if (noImportadas) omitidos.push(noImportadas + " citas reprogramadas o canceladas (no se importan)");
+  if (sinPrecio.size) omitidos.push("Sin precio en tu lista (quedaron en 0): " + [...sinPrecio].slice(0, 10).join(", "));
   return { nuevos, vinculados, omitidos };
 }
 
