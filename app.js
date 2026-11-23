@@ -449,15 +449,10 @@ function distritosHTML() {
     grupos[k].n++;
   });
   const lista = Object.values(grupos).sort((a, b) => b.n - a.n);
-  if (!lista.length) return `<details class="caja" open><summary><strong>¿De dónde vienen tus clientes?</strong></summary><div class="vacio">Aún no hay distritos registrados.</div></details>`;
-  const max = lista[0].n, N = D.clientes.length || 1;
-  return `<details class="caja" open><summary><strong>¿De dónde vienen tus clientes?</strong></summary>
-    ${lista.slice(0, 10).map((x) => `<div class="fila"><div class="crece"><strong>${esc(x.nombre)}</strong>
-      <div class="barra"><span style="width:${Math.round(x.n / max * 100)}%"></span></div></div>
-      <span class="muted">${x.n} clientes · ${Math.round(x.n / N * 100)}%</span></div>`).join("")}
-    ${sin ? `<p class="muted">${sin} clientes no tienen distrito registrado.</p>` : ""}
-    <p class="muted">La dirección es texto libre, por eso el análisis usa el distrito.</p>
-  </details>`;
+  if (!lista.length) return "";
+  return `<span class="muted" style="align-self:center;font-weight:600">¿De dónde vienen?</span>
+    ${lista.slice(0, 8).map((x) => `<span class="chip" style="cursor:default" title="${Math.round(x.n / D.clientes.length * 100)}% de tus clientes">${esc(x.nombre)} (${x.n})</span>`).join("")}
+    ${sin ? `<span class="muted" style="align-self:center">${sin} sin distrito</span>` : ""}`;
 }
 
 // Ganancias: elegir desde qué mes hasta qué mes
@@ -929,8 +924,7 @@ const vistas = {
     D.atenciones.filter((a) => !a.pacienteId && a.nombre).forEach((a) => { sinVincular[a.nombre] = (sinVincular[a.nombre] || 0) + 1; });
     const nSin = Object.keys(sinVincular).length;
     return `<h2>Clientes</h2>
-    ${distritosHTML()}
-    <div class="chips">${chip("todos", "Todos", D.clientes.length)}${chip("semana", "Nuevos esta semana", cuenta("semana"))}${chip("mes", "Nuevos este mes", cuenta("mes"))}${chip("anio", "Nuevos este año", cuenta("anio"))}</div>
+    <div class="chips">${chip("todos", "Todos", D.clientes.length)}${chip("semana", "Nuevos esta semana", cuenta("semana"))}${chip("mes", "Nuevos este mes", cuenta("mes"))}${chip("anio", "Nuevos este año", cuenta("anio"))}${distritosHTML()}</div>
     <input class="buscador" id="buscar" placeholder="Buscar por nombre, DNI o teléfono" value="${esc(textoBusqueda)}">
     <div class="caja" id="lista">${listaClientesHTML()}</div>
     <details class="caja"><summary>Registrar cliente nuevo</summary>${formCliente(false)}</details>
