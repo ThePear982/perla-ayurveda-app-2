@@ -390,7 +390,49 @@ function fechaCSV(t) {
   return y + "-" + pad(+m[2]) + "-" + pad(+m[1]);
 }
 
+// Formato de hoja copiada con todo en una columna: FECHA(número Excel),NOMBRE;DNI,HORARIO(fracción),TRATAMIENTO
+const serialISO = (n) => new Date(Date.UTC(1899, 11, 30) + n * 864e5).toISOString().slice(0, 10);
+const horaFrac = (x) => {
+  const f = parseFloat(String(x || "").replace(",", "."));
+  if (isNaN(f)) return "";
+  const m = Math.round(f * 1440);
+  return pad(Math.floor(m / 60)) + ":" + pad(m % 60);
+};
+
+function importarSerial(txt) {
+  const lineas = txt.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const existentes = new Set(D.atenciones.map((a) => [a.fecha, norm(a.pacienteId ? C(a.pacienteId).nombre : (a.nombre || "")), norm(a.servicio), +a.total || 0].join("|")));
+  let nuevos = 0, vinculados = 0, noImportadas = 0; const omitidos = [];
+  lineas.forEach((l) => {
+    const m = l.match(/^"?(\d{5})"?\s*,(.*)$/);
+    if (!m) return;
+    const [quien, hora, ...resto] = m[2].split(",");
+    const tratamiento = resto.join(",").replace(/"/g, "").trim();
+    if (/reprog|cancel/i.test(tratamiento)) { noImportadas++; return; }
+    const [nombreRaw, dniRaw = ""] = quien.split(";");
+    const nombre = String(nombreRaw || "").trim().replace(/\s+/g, " ");
+    const dni = dniRaw.replace(/\D/g, "");
+    if (!nombre) { omitidos.push(l.slice(0, 60) + " (sin nombre)"); return; }
+    const fecha = serialISO(+m[1]);
+    const cli = (dni && D.clientes.find((c) => c.dni === dni)) || D.clientes.find((c) => norm(c.nombre) === norm(nombre)) || null;
+    const srv = tratamiento || "TERAPIA";
+    const sv = D.servicios.find((x) => norm(x.nombre) === norm(srv));
+    const total = sv ? +sv.precio || 0 : 0;
+    const k = [fecha, norm(cli ? cli.nombre : nombre), norm(srv), total].join("|");
+    if (existentes.has(k)) return;
+    const reg = { id: uid(), fecha, servicio: srv, tipo: /compra/i.test(srv) ? "compra" : "terapia", total, pago: "",
+      obs: "Horario " + horaFrac(hora) + (tratamiento ? "" : " · tratamiento no anotado") };
+    if (cli) { reg.pacienteId = cli.id; vinculados++; } else reg.nombre = nombre;
+    D.atenciones.push(reg);
+    existentes.add(k);
+    nuevos++;
+  });
+  if (noImportadas) omitidos.push(noImportadas + " citas reprogramadas o canceladas (no se importan)");
+  return { nuevos, vinculados, omitidos };
+}
+
 function importarAntiguos(txt) {
+  if (/^\s*"?\d{5}"?\s*,/m.test(txt)) return importarSerial(txt);
   const sep = txt.includes("\t") ? "\t" : (txt.split("\n")[0].includes(";") ? ";" : ",");
   const filas = parseCSV(txt, sep);
   const hi = filas.findIndex((f) => f.some((c) => norm(c).trim() === "fecha") && f.some((c) => /servicio/.test(norm(c))));
