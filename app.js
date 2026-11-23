@@ -445,13 +445,13 @@ function distritosHTML() {
   D.clientes.forEach((x) => {
     const k = norm(x.distrito).trim();
     if (!k) { sin++; return; }
-    grupos[k] ||= { nombre: String(x.distrito).trim().toUpperCase(), n: 0 };
+    grupos[k] ||= { k, nombre: String(x.distrito).trim().toUpperCase(), n: 0 };
     grupos[k].n++;
   });
   const lista = Object.values(grupos).sort((a, b) => b.n - a.n);
   if (!lista.length) return "";
   return `<span class="muted" style="align-self:center;font-weight:600">¿De dónde vienen?</span>
-    ${lista.slice(0, 8).map((x) => `<span class="chip" style="cursor:default" title="${Math.round(x.n / D.clientes.length * 100)}% de tus clientes">${esc(x.nombre)} (${x.n})</span>`).join("")}
+    ${lista.slice(0, 8).map((x) => `<button type="button" class="chip ${filtroDist === x.k ? "sel" : ""}" data-dist="${x.k}" title="${Math.round(x.n / D.clientes.length * 100)}% de tus clientes">${esc(x.nombre)} (${x.n})</button>`).join("")}
     ${sin ? `<span class="muted" style="align-self:center">${sin} sin distrito</span>` : ""}`;
 }
 
@@ -477,6 +477,123 @@ function rangoHTML() {
       <div class="barra"><span style="width:${Math.round(x.t / max * 100)}%"></span></div></div>
       <span class="monto">${soles(x.t)}</span></div>`).join("")}
   </section>`;
+}
+
+// ---------- NUEVAS FUNCIONES: REACTIVAR, CANALES, SALDOS, HORAS, EVA, SERVICIOS ANTIGUOS, EDITAR ----------
+// 1) Clientes para reactivar (sin terapia hace 60+ días o nunca)
+function reactivarHTML() {
+  const lista = D.clientes.map((c) => { const u = historial(c.id).find(esTerapia); return { c, u: u ? u.fecha : "" }; })
+    .filter((x) => !x.u || -diasEntre(x.u) >= 60)
+    .sort((a, b) => (a.u || "0").localeCompare(b.u || "0"));
+  if (!lista.length) return "";
+  return `<details class="caja"><summary><strong>Clientes para reactivar</strong> (${lista.length} sin venir hace 60 días o más)</summary>
+    ${lista.slice(0, 40).map(({ c, u }) => `<div class="fila"><div class="crece"><strong>${esc(c.nombre)}</strong>
+      <div class="muted">${u ? "Última terapia: " + fCorta(u) : "Nunca tuvo una terapia registrada"}</div></div>
+      ${telWA(c.telefono) ? `<a class="btn secundario" target="_blank" rel="noopener" href="https://wa.me/${telWA(c.telefono)}?text=${encodeURIComponent(`Hola ${nombreCorto(c.nombre)}, te extrañamos en Perla Ayurveda. ¿Te gustaría agendar tu próxima terapia?`)}">WhatsApp</a>` : ""}</div>`).join("")}
+  </details>`;
+}
+
+// 2) ¿Cómo se enteraron de la clínica?
+function canalesHTML() {
+  const g = {}; let sin = 0;
+  D.clientes.forEach((c) => { const k = String(c.origen || "").trim(); if (!k) { sin++; return; } g[k] = (g[k] || 0) + 1; });
+  const lista = Object.entries(g).sort((a, b) => b[1] - a[1]);
+  if (!lista.length) return "";
+  const max = lista[0][1], N = D.clientes.length || 1;
+  return `<details class="caja"><summary><strong>¿Cómo se enteraron de la clínica?</strong></summary>
+    ${lista.map(([n, k]) => `<div class="fila"><div class="crece"><strong>${esc(n)}</strong>
+      <div class="barra"><span style="width:${Math.round(k / max * 100)}%"></span></div></div>
+      <span class="muted">${k} · ${Math.round(k / N * 100)}%</span></div>`).join("")}
+    ${sin ? `<p class="muted">${sin} clientes sin dato.</p>` : ""}
+  </details>`;
+}
+
+// 3) Cobros pendientes de paquetes
+function saldosHTML() {
+  const deben = D.ventas.filter((v) => saldoDe(v) > 0).sort((a, b) => saldoDe(b) - saldoDe(a));
+  const tot = deben.reduce((s, v) => s + saldoDe(v), 0);
+  return `<details class="caja"><summary><strong>Cobros pendientes de paquetes</strong> (${deben.length} · ${soles(tot)})</summary>
+    ${deben.length ? deben.map(filaVenta).join("") : '<div class="vacio">Nadie debe saldo de paquete.</div>'}
+  </details>`;
+}
+
+// 4) Horas pico: citas por día y hora
+function horasHTML() {
+  const activas = D.citas.filter((c) => !["cancelada", "reprogramada"].includes(c.estado));
+  if (!activas.length) return "";
+  const mapa = {}; let max = 1;
+  activas.forEach((c) => {
+    const dia = new Date(c.fecha + "T00:00").getDay(), h = c.hora.slice(0, 2), k = h + "|" + dia;
+    mapa[k] = (mapa[k] || 0) + 1; max = Math.max(max, mapa[k]);
+  });
+  const horas = [...new Set(activas.map((c) => c.hora.slice(0, 2)))].sort();
+  const orden = [1, 2, 3, 4, 5, 6, 0];
+  return `<details class="caja"><summary><strong>Horas pico</strong> (citas por día y hora)</summary>
+    <div class="scroll"><table><thead><tr><th>Hora</th>${DIAS.map(([n, t]) => `<th class="num">${t}</th>`).join("")}</tr></thead><tbody>
+    ${horas.map((h) => `<tr><td>${h}:00</td>${orden.map((dn) => {
+      const n = mapa[h + "|" + dn] || 0;
+      return `<td class="num" style="background:rgba(109,63,201,${(n / max * 0.6).toFixed(2)})">${n || ""}</td>`;
+    }).join("")}</tr>`).join("")}
+    </tbody></table></div></details>`;
+}
+
+// 5) Evolución del dolor (EVA) por cliente
+function evaHTML(c) {
+  const serie = ((c.ficha && c.ficha.eva) || []).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const pts = serie.map((p, i) => [serie.length > 1 ? 20 + i * (560 / (serie.length - 1)) : 300, 150 - p.valor * 12]);
+  const svg = serie.length ? `<svg viewBox="0 0 600 180" style="width:100%;max-width:600px">
+      <line x1="20" y1="150" x2="580" y2="150" style="stroke:var(--line)"/>
+      ${pts.length > 1 ? `<polyline points="${pts.map((p) => p.join(",")).join(" ")}" fill="none" style="stroke:var(--primary);stroke-width:3"/>` : ""}
+      ${pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="5" style="fill:var(--primary)"><title>${fCorta(serie[i].fecha)}: ${serie[i].valor}/10</title></circle>`).join("")}
+    </svg>` : '<div class="vacio">Aún no hay registros de dolor.</div>';
+  return `<section class="caja"><h3>Evolución del dolor (EVA 0 a 10)</h3>
+    ${svg}
+    <form class="form" data-eva="${c.id}" style="grid-template-columns:1fr 1fr 2fr auto;align-items:end">
+      <label>Fecha<input type="date" name="fecha" value="${hoy()}" required></label>
+      <label>EVA (0 a 10)<input type="number" name="valor" min="0" max="10" step="1" required></label>
+      <label>Nota<input name="nota"></label>
+      <button class="btn">Guardar</button>
+    </form>
+    ${serie.length ? `<div class="scroll"><table><tbody>${serie.slice().reverse().map((p) => `<tr><td>${fCorta(p.fecha)}</td><td class="num">${p.valor}/10</td><td>${esc(p.nota || "")}</td></tr>`).join("")}</tbody></table></div>` : ""}
+  </section>`;
+}
+
+// 6) Servicios antiguos (de la ficha de papel)
+function serviciosAntiguosHTML(c) {
+  return `<details class="caja"><summary><strong>Agregar servicio antiguo</strong> (de tu ficha de papel)</summary>
+    <form class="form" data-antiguo="${c.id}" style="grid-template-columns:1fr 2fr 1fr 1fr">
+      <label>Fecha<input type="date" name="fecha" required></label>
+      <label>Servicio<input name="servicio" list="listaSrvAnt" required placeholder="Ej. Masaje relajante"></label>
+      <label>Monto cobrado (S/)<input type="number" name="monto" min="0" step="0.5" value="0"></label>
+      <label>Pago<select name="pago"><option>Efectivo</option><option>Yape</option><option>Plin</option><option>Transferencia</option><option>Tarjeta</option><option>Paquete</option></select></label>
+      <label style="grid-column:1/-1">Observación<input name="obs"></label>
+      <datalist id="listaSrvAnt">${D.servicios.map((s) => `<option value="${esc(s.nombre)}">`).join("")}</datalist>
+      <button class="btn" style="grid-column:1/-1">Guardar servicio</button>
+    </form></details>`;
+}
+
+// 7) Editar datos del cliente
+function abrirEditarCliente(id) {
+  const c = C(id), f = c.ficha || {}, v = (x) => esc(x || "");
+  const opts = (lista, actual) => [...new Set([...lista, actual].filter(Boolean))]
+    .map((o) => `<option ${actual === o ? "selected" : ""}>${esc(o)}</option>`).join("");
+  abrirDialogo(`<div class="modal-top"><h2>Editar datos</h2><button type="button" class="btn secundario" data-cerrar="1">Cerrar</button></div>
+    <form class="form" data-editar="${c.id}" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+      <label>DNI<input name="dni" value="${v(c.dni)}" inputmode="numeric" maxlength="8" required></label>
+      <label>Nombres y apellidos<input name="nombre" value="${v(c.nombre)}" required></label>
+      <label>Sexo<select name="sexo">${opts(["Mujer", "Hombre"], c.sexo)}</select></label>
+      <label>Fecha de nacimiento<input type="date" name="nacimiento" value="${v(c.nacimiento)}"></label>
+      <label>Teléfono (WhatsApp)<input name="telefono" value="${v(c.telefono)}" required></label>
+      <label>Correo<input name="correo" type="email" value="${v(c.correo)}"></label>
+      <label>Dirección<input name="direccion" value="${v(c.direccion)}"></label>
+      <label>Distrito<input name="distrito" value="${v(c.distrito)}"></label>
+      <label>¿Cómo se enteró?<select name="origen">${opts(["Recomendación", "Facebook", "Anuncio o volante", "Otro"], c.origen)}</select></label>
+      <label>Motivo de consulta<input name="motivo" value="${v(f.motivo)}"></label>
+      <label>¿Embarazo?<select name="embarazo">${opts(["No aplica", "No", "Sí"], f.embarazo)}</select></label>
+      <label style="grid-column:1/-1">Antecedentes, alergias y medicamentos<textarea name="antecedentes">${v(f.antecedentes)}</textarea></label>
+      <p class="error msg" style="grid-column:1/-1"></p>
+      <button class="btn" style="grid-column:1/-1">Guardar cambios</button>
+    </form>`);
 }
 
 /* ---------- CONSULTAS ---------- */
@@ -563,7 +680,7 @@ const urlWAPaq = (v) => "https://wa.me/" + telWA(C(v.pacienteId).telefono) + "?t
 
 /* ---------- UI BASE ---------- */
 let pestanaActual = "hoy", filtroCitas = "proximas", periodo = "dia", filtroCli = "todos";
-let paqSel = "", textoPaq = "", mesDesde = "", mesHasta = "";
+let paqSel = "", textoPaq = "", mesDesde = "", mesHasta = "", filtroDist = "";
 let textoBusqueda = "", textoSrv = "", clienteSel = null, cfgTab = "usuarios", cobrando = null;
 let salaCobroId = null;     // cita de la sala que espera el método de pago
 let nc = null;              // estado de la ventana "Nueva cita"
@@ -743,6 +860,7 @@ function clientesFiltrados() {
   const r = RANGOS();
   let l = D.clientes;
   if (filtroCli !== "todos") l = l.filter((c) => c.registro >= r[filtroCli][0] && c.registro <= r[filtroCli][1]);
+  if (filtroDist) l = l.filter((c) => norm(c.distrito).trim() === filtroDist);
   const q = norm(textoBusqueda.trim());
   if (q) l = l.filter((c) => norm(c.nombre + " " + c.dni + " " + c.telefono).includes(q));
   return l.slice().sort((a, b) => (filtroCli === "todos" ? a.nombre.localeCompare(b.nombre) : b.registro.localeCompare(a.registro)));
@@ -908,6 +1026,7 @@ const vistas = {
     const listo = D.clientes.length && D.servicios.length;
     return `<h2>Citas</h2>
     ${listo ? '<button class="btn gran" data-nueva="1">+ Nueva cita</button>' : '<div class="caja vacio">Primero registra al menos un cliente y un servicio.</div>'}
+    ${horasHTML()}
     <div class="seccion">
       <div style="max-width:220px;margin-bottom:10px"><select id="filtro">
         ${[["proximas", "Próximas"], ["hoy", "Solo hoy"], ["todas", "Todas"]].map(([v, t]) => `<option value="${v}" ${filtroCitas === v ? "selected" : ""}>${t}</option>`).join("")}</select></div>
@@ -925,7 +1044,11 @@ const vistas = {
     const nSin = Object.keys(sinVincular).length;
     return `<h2>Clientes</h2>
     <div class="chips">${chip("todos", "Todos", D.clientes.length)}${chip("semana", "Nuevos esta semana", cuenta("semana"))}${chip("mes", "Nuevos este mes", cuenta("mes"))}${chip("anio", "Nuevos este año", cuenta("anio"))}${distritosHTML()}</div>
+    ${canalesHTML()}
+    ${reactivarHTML()}
     <input class="buscador" id="buscar" placeholder="Buscar por nombre, DNI o teléfono" value="${esc(textoBusqueda)}">
+    ${filtroDist ? `<p class="muted">Mostrando clientes de <strong>${esc((D.clientes.find((c) => norm(c.distrito).trim() === filtroDist) || {}).distrito || "")}</strong>
+      · <button type="button" class="btn secundario" data-dist="">Quitar filtro</button></p>` : ""}
     <div class="caja" id="lista">${listaClientesHTML()}</div>
     <details class="caja"><summary>Registrar cliente nuevo</summary>${formCliente(false)}</details>
     ${nSin ? `<details class="caja"><summary>${nSin} personas atendidas sin registro de cliente</summary>
@@ -951,6 +1074,7 @@ const vistas = {
     const ventas = D.ventas.slice().reverse();
     return `<h2>Paquetes</h2>
     ${resumenPaquetesHTML()}
+    ${saldosHTML()}
     <h3>Vender paquete</h3>
     ${listo ? `<form class="form" id="fVenta">
       <label>Cliente<select name="pacienteId" required>${clientesOrdenados().map((c) => `<option value="${c.id}" ${c.id === preVenta ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}</select></label>
@@ -1073,7 +1197,7 @@ function detalleCliente(id) {
   const vs = D.ventas.filter((v) => v.pacienteId === id);
   const dato = (t, v) => `<div><span>${t}</span>${esc(v || "—")}</div>`;
   return `<button class="btn secundario" data-volver="1" style="margin-bottom:14px">← Volver a clientes</button>
-  <h2>${esc(c.nombre)}</h2>
+  <h2>${esc(c.nombre)} <button type="button" class="btn secundario" data-editcli="${c.id}" style="font-size:14px;vertical-align:middle">Editar datos</button></h2>
   <div class="tarjetas">
     <div class="tarjeta"><span class="muted">Terapias realizadas</span><div class="cifra">${ter}</div></div>
     <div class="tarjeta"><span class="muted">Paquetes comprados</span><div class="cifra">${vs.length}</div></div>
@@ -1087,6 +1211,8 @@ function detalleCliente(id) {
   <section class="caja"><h3>Ficha clínica</h3><div class="datos">
     ${dato("Motivo de consulta", f.motivo)}${dato("Antecedentes, alergias y medicamentos", f.antecedentes)}
     ${dato("Embarazo", f.embarazo)}${dato("Consentimiento firmado", c.consentimiento ? fCorta(c.consentimiento) : "")}</div></section>
+  ${evaHTML(c)}
+  ${serviciosAntiguosHTML(c)}
   <section class="caja"><h3>Paquetes</h3>${vs.length ? vs.map(filaVenta).join("") : '<div class="vacio">Este cliente no tiene paquetes.</div>'}</section>
   <section class="caja"><h3>Historial de atenciones</h3>
     ${h.length ? `<div class="scroll"><table><thead><tr><th>Fecha</th><th>Servicio</th><th>Tipo</th><th>Detalle</th><th class="num">Monto</th></tr></thead><tbody>
@@ -1396,6 +1522,13 @@ document.addEventListener("click", async (e) => {
   const q = (s) => e.target.closest(s);
   const d = (s, k) => { const el = q(s); return el ? el.dataset[k] : undefined; };
 
+  if (q("[data-editcli]")) { abrirEditarCliente(d("[data-editcli]", "editcli")); return; }
+  if (q("[data-dist]")) {
+    const k = d("[data-dist]", "dist");
+    filtroDist = k && filtroDist !== k ? k : "";
+    render();
+    return;
+  }
   if (q("[data-selpaq]")) {
     paqSel = d("[data-selpaq]", "selpaq");
     const p = paqObj();
@@ -1698,6 +1831,34 @@ document.addEventListener("submit", async (e) => {
       abonos: pago > 0 ? [{ fecha: d.fecha, monto: pago, metodo: d.metodo }] : [] });
     paqSel = ""; textoPaq = "";
     guardar(); aviso("Paquete vendido"); return render();
+  }
+  if (f.dataset.eva) {
+    const c = D.clientes.find((x) => x.id === f.dataset.eva);
+    if (!c) return;
+    c.ficha ||= {}; c.ficha.eva ||= [];
+    c.ficha.eva.push({ fecha: d.fecha, valor: Math.max(0, Math.min(10, +d.valor || 0)), nota: (d.nota || "").trim() });
+    guardar(); aviso("Registro de dolor guardado"); return render();
+  }
+  if (f.dataset.antiguo) {
+    const c = D.clientes.find((x) => x.id === f.dataset.antiguo);
+    if (!c) return;
+    D.atenciones.push({ id: uid(), pacienteId: c.id, fecha: d.fecha, servicio: d.servicio.trim(), tipo: "terapia",
+      total: +d.monto || 0, pago: d.pago, obs: (d.obs || "").trim() });
+    guardar(); aviso("Servicio agregado a la ficha"); return render();
+  }
+  if (f.dataset.editar) {
+    const c = D.clientes.find((x) => x.id === f.dataset.editar);
+    const msg = f.querySelector(".msg");
+    if (!c) return;
+    const dni = (d.dni || "").trim(), tel = (d.telefono || "").replace(/\D/g, "");
+    if (!/^\d{8}$/.test(dni)) { msg.textContent = "El DNI debe tener 8 dígitos."; return; }
+    if (D.clientes.some((x) => x.id !== c.id && x.dni === dni)) { msg.textContent = "Ya existe otro cliente con ese DNI."; return; }
+    if (tel.length < 9) { msg.textContent = "El teléfono debe tener 9 dígitos."; return; }
+    if (D.clientes.some((x) => x.id !== c.id && (x.telefono || "").replace(/\D/g, "") === tel)) { msg.textContent = "Ya existe otro cliente con ese teléfono."; return; }
+    Object.assign(c, { dni, nombre: d.nombre.trim().toUpperCase(), sexo: d.sexo, nacimiento: d.nacimiento || "",
+      telefono: d.telefono.trim(), correo: d.correo || "", direccion: d.direccion || "", distrito: d.distrito || "", origen: d.origen });
+    c.ficha = { ...(c.ficha || {}), motivo: d.motivo || "", antecedentes: d.antecedentes || "", embarazo: d.embarazo || "No aplica" };
+    guardar(); cerrarModal(); aviso("Datos actualizados"); return render();
   }
   if (f.id === "fAbono") {
     const v = D.ventas.find((x) => x.id === f.dataset.venta);
