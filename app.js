@@ -717,7 +717,7 @@ function abrirEditarCliente(id) {
 
 /* ---------- CONSULTAS ---------- */
 const C = (id) => D.clientes.find((c) => c.id === id) || { nombre: "(cliente eliminado)", dni: "", telefono: "" };
-const S = (id) => D.servicios.find((s) => s.id === id) || { nombre: "(servicio eliminado)", precio: 0 };
+const S = (id) => D.servicios.find((s) => s.id === id) || (id ? { nombre: "(servicio eliminado)", precio: 0 } : { nombre: "Evaluación · tratamiento por definir", precio: 0 });
 const durSrv = (id) => +S(id).duracion || D.ajustes.duracionDefault;
 const nombreAt = (a) => (a.pacienteId ? C(a.pacienteId).nombre : a.nombre) || "Sin nombre";
 const clientesOrdenados = () => D.clientes.slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
@@ -1022,6 +1022,7 @@ function filaCita(c, conFecha) {
     <span class="etq ${c.estado}">${ESTADO[c.estado] || c.estado}</span>
     <select data-st="${c.id}"><option value="">Cambiar estado…</option>
       ${Object.entries(ESTADO).map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
+    ${c.porDefinir ? `<button type="button" class="btn" data-asignar="${c.id}">Asignar tratamiento</button>` : ""}
     ${puede("citas") ? `<button class="btn peligro" data-delcita="${c.id}">Eliminar</button>` : ""}</div>`;
 }
 
@@ -1047,6 +1048,7 @@ function filaHoy(c, esHoy) {
       <button class="btn secundario" data-reprog="${c.id}">Reprogramar</button>
       <button class="btn peligro" data-acc="cancelada" data-id="${c.id}">Cancelar</button>`;
   }
+  if (c.porDefinir) acc = `<button type="button" class="btn" data-asignar="${c.id}">Asignar tratamiento</button> ${acc}`;
   return `<div class="cita-hoy ${c.estado}"><div class="hora">${hora12(c.hora)}</div>
     <div class="crece"><strong>${esc(C(c.pacienteId).nombre)}</strong>
     <div class="muted">${esc(S(c.servicioId).nombre)} · ${durSrv(c.servicioId)} min · ${esc(c.recurso || "")}${c.ventaId ? " · Paquete" : ""}</div></div>
@@ -1510,7 +1512,8 @@ function dibujarModal() {
   const srv = S(nc.srv), dur = durSrv(nc.srv);
   const plan = v && nc.bloque && nc.hora ? planBloque(v) : null;
   const conflicto = !nc.bloque && nc.hora && choca(nc.fecha, nc.hora, dur, nc.reprogramaDe);
-  const listo = nc.cli && nc.srv && nc.hora && !conflicto && (!nc.bloque || (plan && plan.fechas.length));
+  const pend = tienePendiente(nc.cli, nc.reprogramaDe);
+  const listo = nc.cli && (nc.srv || nc.evaluacion) && nc.hora && !pend && !conflicto && (!nc.bloque || (plan && plan.fechas.length));
   const chip = (attr, val, txt, sel, cls = "") => `<button type="button" class="opc ${sel ? "sel" : ""} ${cls}" ${attr}="${val}">${txt}</button>`;
 
   m.hidden = false;
@@ -1525,12 +1528,14 @@ function dibujarModal() {
          <div id="ncRes">${resCli()}</div>`}
 
     ${deudaHTML()}
+    ${pend ? '<div class="caja" style="border-color:#b0306a;background:#fbe7f0"><strong style="color:#b0306a">Esta persona tiene una evaluación sin tratamiento.</strong><p class="muted" style="margin:6px 0 0">Asígnale el tratamiento en la sección Hoy (o Citas) para poder agendar otra cita.</p></div>' : ""}
     <h3>2. Servicio</h3>
+    <button type="button" class="opc ${nc.evaluacion ? "sel" : ""}" data-ncevalua="1" style="margin-bottom:8px">Evaluación (tratamiento por definir)</button>
     <input id="ncBuscaSrv" class="buscador" placeholder="Buscar servicio (ej. masaje, terapia…)" value="${esc(nc.qs)}" autocomplete="off">
     <div id="ncResSrv">${resSrv()}</div>
-    <p class="muted">Elegido: <strong>${esc(srv.nombre)}</strong> · ${durSrv(nc.srv)} min</p>
+    <p class="muted">Elegido: <strong>${nc.evaluacion ? "Evaluación" : esc(srv.nombre)}</strong> · ${durSrv(nc.srv)} min</p>
 
-    ${v ? "" : `<div class="form" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
+    ${v || nc.evaluacion ? "" : `<div class="form" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
       <label>Costo (S/)<input id="ncPrecio" type="number" min="0" step="0.5" value="${nc.precio}"></label>
       <label>Descuento (S/)<input id="ncDesc" type="number" min="0" step="0.5" value="${nc.desc || 0}"></label>
       <div><strong id="ncTotal">Total a cobrar: ${soles(Math.max(0, (+nc.precio || 0) - (+nc.desc || 0)))}</strong></div>
@@ -1564,10 +1569,11 @@ function dibujarModal() {
 }
 
 function agendar() {
+  if (tienePendiente(nc.cli, nc.reprogramaDe)) return;
   const v = D.ventas.find((x) => x.id === nc.ventaId);
   const dur = durSrv(nc.srv);
-  const base = { pacienteId: nc.cli, servicioId: nc.srv, hora: nc.hora, ventaId: v ? v.id : "",
-    precio: v ? 0 : Math.max(0, (+nc.precio || 0) - (+nc.desc || 0)), descuento: v ? 0 : +nc.desc || 0, estado: "pendiente" };
+  const base = { pacienteId: nc.cli, servicioId: nc.evaluacion ? "" : nc.srv, porDefinir: !!nc.evaluacion, hora: nc.hora, ventaId: v ? v.id : "",
+    precio: v || nc.evaluacion ? 0 : Math.max(0, (+nc.precio || 0) - (+nc.desc || 0)), descuento: v || nc.evaluacion ? 0 : +nc.desc || 0, estado: "pendiente" };
   let n = 1;
   if (v && nc.bloque) {
     const p = planBloque(v);
@@ -1615,6 +1621,55 @@ function abrirMiClave() {
 }
 
 /* ---------- HOY, MAÑANA E IMPRESIÓN ---------- */
+// ---------- EVALUACIONES SIN TRATAMIENTO ----------
+const tienePendiente = (pid, excluir) => !!pid && D.citas.some((c) => c.pacienteId === pid && c.porDefinir &&
+  c.id !== excluir && !["cancelada", "reprogramada"].includes(c.estado));
+
+function pendientesTratHTML() {
+  const l = D.citas.filter((c) => c.porDefinir && !["cancelada", "reprogramada"].includes(c.estado))
+    .sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
+  if (!l.length) return "";
+  return `<details class="caja" open><summary><strong>Evaluaciones sin tratamiento</strong> (${l.length})</summary>
+    ${l.map((c) => `<div class="fila"><div class="crece"><strong>${esc(C(c.pacienteId).nombre)}</strong>
+      <div class="muted">${fDia(c.fecha)} · ${hora12(c.hora)} · no se le puede agendar otra cita hasta asignar el tratamiento</div></div>
+      <button type="button" class="btn" data-asignar="${c.id}">Asignar tratamiento</button></div>`).join("")}
+  </details>`;
+}
+
+let asigId = "", asigSrv = "", asigBusca = "", asigCosto = "";
+function asigResHTML() {
+  const q = norm(asigBusca.trim());
+  const l = D.servicios.filter((s) => !q || norm(s.nombre).includes(q)).slice(0, 10);
+  if (!l.length) return '<div class="vacio">No hay tratamientos con ese nombre. Créalo en Servicios.</div>';
+  return l.map((s) => `<button type="button" class="opc lista ${asigSrv === s.id ? "sel" : ""}" data-asigsrv="${s.id}"><strong>${esc(s.nombre)}</strong> <small>${soles(s.precio)}</small></button>`).join("");
+}
+function dibujarAsignar() {
+  const c = D.citas.find((x) => x.id === asigId);
+  if (!c) return cerrarModal();
+  const srv = D.servicios.find((x) => x.id === asigSrv);
+  abrirDialogo(`<div class="modal-top"><h2>Asignar tratamiento</h2><button type="button" class="btn secundario" data-cerrar="1">Cerrar</button></div>
+    <p><strong>${esc(C(c.pacienteId).nombre)}</strong> · ${fDia(c.fecha)} · ${hora12(c.hora)}</p>
+    <input id="asigBusca" class="buscador" placeholder="Buscar tratamiento" autocomplete="off" value="${esc(asigBusca)}">
+    <div id="asigRes">${asigResHTML()}</div>
+    ${srv ? `<p class="muted">Elegido: <strong>${esc(srv.nombre)}</strong></p>` : ""}
+    <label>Costo (S/)<input id="asigCosto" type="number" min="0" step="0.5" value="${asigCosto}"></label>
+    <button type="button" class="btn grande" data-asigok="1" ${srv ? "" : "disabled"}>Guardar tratamiento</button>`);
+}
+function abrirAsignar(id) {
+  const c = D.citas.find((x) => x.id === id);
+  if (!c) return;
+  asigId = id; asigSrv = ""; asigBusca = ""; asigCosto = "";
+  dibujarAsignar();
+}
+function guardarAsignar() {
+  const c = D.citas.find((x) => x.id === asigId), srv = D.servicios.find((x) => x.id === asigSrv);
+  if (!c || !srv) return;
+  c.servicioId = srv.id;
+  c.porDefinir = false;
+  if (!c.ventaId) c.precio = +asigCosto || 0;
+  guardar(); cerrarModal(); aviso("Tratamiento asignado: " + srv.nombre); render();
+}
+
 // Deuda de paquetes del paciente seleccionado en Nueva cita
 function deudaHTML() {
   if (!nc || !nc.cli) return "";
@@ -1754,7 +1809,7 @@ vistas.hoy = function () {
   const bloque = (titulo, f, lista, esHoy, extra) => `<section class="dia"><div class="dia-barra"><h2>${titulo} <span class="muted">${fDia(f)}</span></h2>
     <div class="dia-botones">${extra}<button class="btn secundario" data-imprimir="${f}">Imprimir agenda</button></div></div>
     ${lista.length ? lista.map((c) => filaHoy(c, esHoy)).join("") : '<div class="vacio">No hay citas.</div>'}</section>`;
-  return bloque("Hoy", h, lh, true, "") +
+  return pendientesTratHTML() + bloque("Hoy", h, lh, true, "") +
     bloque("Mañana", m, lm, false, lm.length ? `<button class="btn" data-recordar="1" ${faltan ? "" : "disabled"}>${faltan ? `Recordar a los de mañana (${faltan})` : "Todos avisados"}</button>` : "");
 };
 
@@ -1812,6 +1867,15 @@ document.addEventListener("click", async (e) => {
     }
     return;
   }
+  if (q("[data-ncevalua]")) { nc.evaluacion = !nc.evaluacion; if (nc.evaluacion) nc.srv = ""; return dibujarModal(); }
+  if (q("[data-asignar]")) { abrirAsignar(d("[data-asignar]", "asignar")); return; }
+  if (q("[data-asigsrv]")) {
+    asigSrv = d("[data-asigsrv]", "asigsrv");
+    const srv = D.servicios.find((x) => x.id === asigSrv);
+    asigCosto = srv ? String(srv.precio) : "";
+    dibujarAsignar(); return;
+  }
+  if (q("[data-asigok]")) { guardarAsignar(); return; }
   if (q("[data-selpaq]")) {
     paqSel = d("[data-selpaq]", "selpaq");
     const p = paqObj();
@@ -2020,6 +2084,7 @@ document.addEventListener("click", async (e) => {
   }
   if (q("[data-nccambiar]")) { nc.cli = ""; nc.ventaId = ""; nc.bloque = false; return dibujarModal(); }
   if (q("[data-ncsrv]")) {
+    nc.evaluacion = false;
     nc.srv = d("[data-ncsrv]", "ncsrv");
     nc.precio = S(nc.srv).precio || 0;
     return dibujarModal();
@@ -2050,6 +2115,8 @@ document.addEventListener("input", (e) => {
   if (t.id === "antPaqBusca") { antPaqBusca = t.value; $("#antPaqRes").innerHTML = antPaqResHTML(); return; }
   if (t.id === "antCosto") { antCosto = t.value; return; }
   if (t.id === "antHora") { antHora = t.value; return; }
+  if (t.id === "asigBusca") { asigBusca = t.value; $("#asigRes").innerHTML = asigResHTML(); return; }
+  if (t.id === "asigCosto") { asigCosto = t.value; return; }
   if (!nc) return;
   if (t.id === "ncBusca") { nc.q = t.value; $("#ncRes").innerHTML = resCli(); }
   else if (t.id === "ncBuscaSrv") { nc.qs = t.value; $("#ncResSrv").innerHTML = resSrv(); }
