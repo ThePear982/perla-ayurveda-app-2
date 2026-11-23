@@ -396,6 +396,92 @@ const importHTML = (k) => {
     <p class="msg" id="impmsg-${k}"></p></details>`;
 };
 
+// ---------- MEJORAS: PAQUETES, CLIENTES Y GANANCIAS ----------
+const paqObj = () => D.paquetes.find((p) => p.id === paqSel);
+const mesNombre = (mm) => new Date(mm + "-01T00:00").toLocaleDateString("es-PE", { month: "long", year: "numeric" });
+
+// Buscador de paquetes para vender; si no existe, permite crearlo ahí mismo
+function resPaqHTML() {
+  const q = norm(textoPaq.trim());
+  const lista = q ? D.paquetes.filter((p) => norm(p.nombre).includes(q)) : D.paquetes;
+  const botones = lista.map((p) => `<button type="button" class="opc ${paqSel === p.id ? "sel" : ""}" data-selpaq="${p.id}">${esc(p.nombre)} <small>${p.sesiones} ses. · ${soles(p.precio)}</small></button>`).join("");
+  const elegido = paqObj() ? `<p class="muted">Elegido: <strong>${esc(paqObj().nombre)}</strong></p>` : '<p class="muted">Todavía no has elegido un paquete.</p>';
+  const crear = q && !lista.length ? `<div class="caja"><strong>No encontré "${esc(textoPaq.trim())}".</strong>
+      <p class="muted">Créalo aquí mismo y se usará en esta venta.</p>
+      <div class="form" style="grid-template-columns:2fr 1fr 1fr">
+        <label>Nombre<input id="nPaqNom" value="${esc(textoPaq.trim())}"></label>
+        <label>Sesiones<input id="nPaqSes" type="number" min="1"></label>
+        <label>Precio (S/)<input id="nPaqPre" type="number" min="0" step="0.5"></label>
+      </div>
+      <button type="button" class="btn" data-crearpaq="1">Crear paquete y usarlo</button></div>` : "";
+  return `<div class="opciones">${botones}</div>${elegido}${crear}`;
+}
+
+// Resumen: paquetes vendidos por mes y paquete más vendido
+function resumenPaquetesHTML() {
+  if (!D.ventas.length) return "";
+  const porMes = {}, porPaq = {};
+  D.ventas.forEach((v) => {
+    const m = String(v.fecha || "").slice(0, 7);
+    if (m) { porMes[m] ||= { n: 0, valor: 0 }; porMes[m].n++; porMes[m].valor += +v.precio || 0; }
+    porPaq[v.nombre] = (porPaq[v.nombre] || 0) + 1;
+  });
+  const meses = Object.keys(porMes).sort().reverse();
+  const top = Object.entries(porPaq).sort((a, b) => b[1] - a[1]);
+  return `<section class="caja"><h3>Resumen de paquetes</h3>
+    ${top.length ? `<p><strong>Paquete más vendido:</strong> ${esc(top[0][0])} (${top[0][1]} ventas)</p>` : ""}
+    <div class="scroll"><table><thead><tr><th>Mes</th><th class="num">Paquetes vendidos</th><th class="num">Valor vendido</th></tr></thead><tbody>
+    ${meses.map((m) => `<tr><td>${mesNombre(m)}</td><td class="num">${porMes[m].n}</td><td class="num">${soles(porMes[m].valor)}</td></tr>`).join("")}
+    </tbody></table></div>
+    ${top.length > 1 ? `<p class="muted">Ranking: ${top.slice(0, 5).map(([n, k]) => `${esc(n)} (${k})`).join(" · ")}</p>` : ""}
+  </section>`;
+}
+
+// Clientes: de qué distritos vienen
+function distritosHTML() {
+  const grupos = {}; let sin = 0;
+  D.clientes.forEach((x) => {
+    const k = norm(x.distrito).trim();
+    if (!k) { sin++; return; }
+    grupos[k] ||= { nombre: String(x.distrito).trim().toUpperCase(), n: 0 };
+    grupos[k].n++;
+  });
+  const lista = Object.values(grupos).sort((a, b) => b.n - a.n);
+  if (!lista.length) return `<section class="caja"><h3>¿De dónde vienen tus clientes?</h3><div class="vacio">Aún no hay distritos registrados.</div></section>`;
+  const max = lista[0].n, N = D.clientes.length || 1;
+  return `<section class="caja"><h3>¿De dónde vienen tus clientes?</h3>
+    ${lista.slice(0, 10).map((x) => `<div class="fila"><div class="crece"><strong>${esc(x.nombre)}</strong>
+      <div class="barra"><span style="width:${Math.round(x.n / max * 100)}%"></span></div></div>
+      <span class="muted">${x.n} clientes · ${Math.round(x.n / N * 100)}%</span></div>`).join("")}
+    ${sin ? `<p class="muted">${sin} clientes no tienen distrito registrado.</p>` : ""}
+    <p class="muted">La dirección es texto libre, por eso el análisis usa el distrito.</p>
+  </section>`;
+}
+
+// Ganancias: elegir desde qué mes hasta qué mes
+function rangoHTML() {
+  const actual = hoy().slice(0, 7);
+  let desde = mesDesde || actual, hasta = mesHasta || actual;
+  if (desde > hasta) [desde, hasta] = [hasta, desde];
+  const movs = movimientos(desde + "-01", hasta + "-31");
+  const meses = [];
+  let [y, m] = desde.split("-").map(Number);
+  const [yf, mf] = hasta.split("-").map(Number);
+  while (y * 100 + m <= yf * 100 + mf) { meses.push(y + "-" + pad(m)); if (++m > 12) { m = 1; y++; } }
+  const porMes = meses.map((mm) => ({ mm, t: total(movs.filter((x) => x.fecha.startsWith(mm))) }));
+  const max = Math.max(1, ...porMes.map((x) => x.t));
+  return `<section class="caja"><h3>Ganancias por rango de meses</h3>
+    <div class="form" style="grid-template-columns:1fr 1fr 1fr">
+      <label>Desde<input type="month" data-mes="desde" value="${desde}"></label>
+      <label>Hasta<input type="month" data-mes="hasta" value="${hasta}"></label>
+      <div><strong>Total del rango: ${soles(total(movs))}</strong></div>
+    </div>
+    ${porMes.map((x) => `<div class="fila"><div class="crece"><strong>${mesNombre(x.mm)}</strong>
+      <div class="barra"><span style="width:${Math.round(x.t / max * 100)}%"></span></div></div>
+      <span class="monto">${soles(x.t)}</span></div>`).join("")}
+  </section>`;
+}
+
 /* ---------- CONSULTAS ---------- */
 const C = (id) => D.clientes.find((c) => c.id === id) || { nombre: "(cliente eliminado)", dni: "", telefono: "" };
 const S = (id) => D.servicios.find((s) => s.id === id) || { nombre: "(servicio eliminado)", precio: 0 };
@@ -480,6 +566,7 @@ const urlWAPaq = (v) => "https://wa.me/" + telWA(C(v.pacienteId).telefono) + "?t
 
 /* ---------- UI BASE ---------- */
 let pestanaActual = "hoy", filtroCitas = "proximas", periodo = "dia", filtroCli = "todos";
+let paqSel = "", textoPaq = "", mesDesde = "", mesHasta = "";
 let textoBusqueda = "", textoSrv = "", clienteSel = null, cfgTab = "usuarios", cobrando = null;
 let salaCobroId = null;     // cita de la sala que espera el método de pago
 let nc = null;              // estado de la ventana "Nueva cita"
@@ -843,6 +930,7 @@ const vistas = {
     <div class="chips">${chip("todos", "Todos", D.clientes.length)}${chip("semana", "Nuevos esta semana", cuenta("semana"))}${chip("mes", "Nuevos este mes", cuenta("mes"))}${chip("anio", "Nuevos este año", cuenta("anio"))}</div>
     <input class="buscador" id="buscar" placeholder="Buscar por nombre, DNI o teléfono" value="${esc(textoBusqueda)}">
     <div class="caja" id="lista">${listaClientesHTML()}</div>
+    ${distritosHTML()}
     <details class="caja"><summary>Registrar cliente nuevo</summary>${formCliente(false)}</details>
     ${nSin ? `<details class="caja"><summary>${nSin} personas atendidas sin registro de cliente</summary>
       <p class="muted">Aparecen en tus atenciones pero no en el formulario. Su dinero sí cuenta en Ganancias.</p>
@@ -863,20 +951,24 @@ const vistas = {
   },
 
   paquetes() {
-    const listo = D.clientes.length && D.paquetes.length;
+    const listo = D.clientes.length;
     const ventas = D.ventas.slice().reverse();
     return `<h2>Paquetes</h2>
     <h3>Vender paquete</h3>
     ${listo ? `<form class="form" id="fVenta">
       <label>Cliente<select name="pacienteId" required>${clientesOrdenados().map((c) => `<option value="${c.id}" ${c.id === preVenta ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}</select></label>
-      <label>Paquete<select name="paqueteId" id="selPaq" required>${D.paquetes.map((q) => `<option value="${q.id}" data-p="${q.precio}">${esc(q.nombre)} · ${q.sesiones} ses.</option>`).join("")}</select></label>
-      <label>Precio total (S/)<input type="number" name="precio" id="inPaqPrecio" min="0" step="0.5" value="${D.paquetes[0].precio}" required></label>
+      <label style="grid-column:1/-1">Paquete<input id="buscaPaq" placeholder="Escribe el nombre del paquete…" autocomplete="off" value="${esc(textoPaq)}"></label>
+      <input type="hidden" name="paqueteId" id="paqId" value="${paqSel}">
+      <div id="resPaq" style="grid-column:1/-1">${resPaqHTML()}</div>
+      <label>Precio total (S/)<input type="number" name="precio" id="inPaqPrecio" min="0" step="0.5" value="${paqObj() ? paqObj().precio : ''}" required></label>
       <label>Pago inicial (S/)<input type="number" name="pago" min="0" step="0.5" value="0"></label>
       <label>Método<select name="metodo"><option>Efectivo</option><option>Yape</option><option>Plin</option><option>Transferencia</option><option>Tarjeta</option></select></label>
       <label>Fecha<input type="date" name="fecha" value="${hoy()}" required></label>
       <button class="btn">Vender paquete</button>
-    </form>` : '<div class="caja vacio">Necesitas clientes y paquetes registrados.</div>'}
+    </form>` : '<div class="caja vacio">Primero registra al menos un cliente.</div>'}
     <div class="caja">${ventas.length ? ventas.map(filaVenta).join("") : '<div class="vacio">Aún no hay paquetes vendidos.</div>'}</div>
+
+    ${resumenPaquetesHTML()}
 
     <div class="seccion"><h2>Catálogo de paquetes</h2>
     ${importHTML("paq")}
@@ -897,7 +989,8 @@ const vistas = {
     const mov = (k) => movimientos(r[k][0], r[k][1]);
     const porCobrar = D.ventas.reduce((s, v) => s + saldoDe(v), 0);
     const d = mov(periodo);
-    return `<div class="tarjetas">${["dia", "semana", "mes", "anio"].map((k) => `<div class="tarjeta ${periodo === k ? "sel" : ""}" data-per="${k}">
+    return `${rangoHTML()}
+    <div class="tarjetas">${["dia", "semana", "mes", "anio"].map((k) => `<div class="tarjeta ${periodo === k ? "sel" : ""}" data-per="${k}">
       <span class="muted">${nombres[k]}</span><div class="cifra">${soles(total(mov(k)))}</div></div>`).join("")}</div>
     <p class="muted">Por cobrar en paquetes: <strong>${soles(porCobrar)}</strong></p>
     <section class="caja"><h3>Detalle: ${nombres[periodo].toLowerCase()}</h3>
@@ -1308,6 +1401,26 @@ document.addEventListener("click", async (e) => {
   const q = (s) => e.target.closest(s);
   const d = (s, k) => { const el = q(s); return el ? el.dataset[k] : undefined; };
 
+  if (q("[data-selpaq]")) {
+    paqSel = d("[data-selpaq]", "selpaq");
+    const p = paqObj();
+    if ($("#paqId")) $("#paqId").value = paqSel;
+    if (p && $("#inPaqPrecio")) $("#inPaqPrecio").value = p.precio;
+    if ($("#resPaq")) $("#resPaq").innerHTML = resPaqHTML();
+    return;
+  }
+  if (q("[data-crearpaq]")) {
+    const nombre = ($("#nPaqNom").value || "").trim(), ses = +$("#nPaqSes").value, precio = +$("#nPaqPre").value;
+    if (!nombre || !(ses > 0) || !(precio >= 0)) { alert("Escribe el nombre, las sesiones y el precio del paquete."); return; }
+    const nuevo = { id: uid(), nombre, sesiones: ses, precio };
+    D.paquetes.push(nuevo);
+    paqSel = nuevo.id; textoPaq = "";
+    const cli = document.querySelector('select[name="pacienteId"]');
+    if (cli) preVenta = cli.value;
+    guardar(); aviso("Paquete creado: " + nombre); render();
+    return;
+  }
+
   // Diálogos
   if (q("[data-dlg]")) {
     const r = resolverDialogo;
@@ -1520,6 +1633,7 @@ document.addEventListener("input", (e) => {
   const t = e.target;
   if (t.id === "buscar") { textoBusqueda = t.value; $("#lista").innerHTML = listaClientesHTML(); return; }
   if (t.id === "buscarSrv") { textoSrv = t.value; $("#listaSrv").innerHTML = listaSrvHTML(); return; }
+  if (t.id === "buscaPaq") { textoPaq = t.value; $("#resPaq").innerHTML = resPaqHTML(); return; }
   if (!nc) return;
   if (t.id === "ncBusca") { nc.q = t.value; $("#ncRes").innerHTML = resCli(); }
   else if (t.id === "ncBuscaSrv") { nc.qs = t.value; $("#ncResSrv").innerHTML = resSrv(); }
@@ -1546,6 +1660,7 @@ document.addEventListener("change", (e) => {
     if (c) { c.recurso = t.value; guardar(); render(); }
     return;
   }
+  if (t.dataset.mes) { if (t.dataset.mes === "desde") mesDesde = t.value; else mesHasta = t.value; return render(); }
   if (t.id === "filtro") { filtroCitas = t.value; return render(); }
   if (t.id === "impFile" && t.files[0]) return importar(t.files[0]);
   if (t.id === "selPaq") { const el = $("#inPaqPrecio"); if (el) el.value = t.selectedOptions[0].dataset.p; return; }
@@ -1581,11 +1696,12 @@ document.addEventListener("submit", async (e) => {
   }
   if (f.id === "fVenta") {
     const q = D.paquetes.find((x) => x.id === d.paqueteId);
-    if (!q) return;
+    if (!q) { alert("Elige un paquete de la lista o créalo con el botón de arriba."); return; }
     const pago = +d.pago || 0;
     D.ventas.push({ id: uid(), pacienteId: d.pacienteId, nombre: q.nombre, sesiones: q.sesiones, precio: +d.precio,
       fecha: d.fecha, vence: sumarDias(d.fecha, D.ajustes.vigenciaDias),
       abonos: pago > 0 ? [{ fecha: d.fecha, monto: pago, metodo: d.metodo }] : [] });
+    paqSel = ""; textoPaq = "";
     guardar(); aviso("Paquete vendido"); return render();
   }
   if (f.id === "fAbono") {
@@ -1893,4 +2009,3 @@ setInterval(() => {
   latirSala();
   if (tic % 30 === 0 && pestanaActual === "sala" && YO && !$("#panel").hidden && $("#modal").hidden) render();
 }, 1000);
-
