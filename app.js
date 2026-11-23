@@ -1529,7 +1529,7 @@ function dibujarModal() {
          <div id="ncRes">${resCli()}</div>`}
 
     ${deudaHTML()}
-    ${pend ? '<div class="caja" style="border-color:#b0306a;background:#fbe7f0"><strong style="color:#b0306a">Esta persona tiene una evaluación sin tratamiento.</strong><p class="muted" style="margin:6px 0 0">Asígnale el tratamiento en la sección Hoy (o Citas) para poder agendar otra cita.</p></div>' : ""}
+    ${pend ? '<div class="caja" style="border-color:#b0306a;background:#fbe7f0"><strong style="color:#b0306a">No se puede agendar a nadie hasta asignar el tratamiento de las evaluaciones pendientes.</strong><p class="muted" style="margin:6px 0 0">Revisa la lista "Evaluaciones sin tratamiento" en Hoy y asigna cada tratamiento.</p></div>' : ""}
     <h3>2. Servicio</h3>
     <button type="button" class="opc ${nc.evaluacion ? "sel" : ""}" data-ncevalua="1" style="margin-bottom:8px">Evaluación (tratamiento por definir)</button>
     <input id="ncBuscaSrv" class="buscador" placeholder="Buscar servicio (ej. masaje, terapia…)" value="${esc(nc.qs)}" autocomplete="off">
@@ -1671,13 +1671,9 @@ function duplicadosHTML() {
 }
 
 // ---------- EVALUACIONES SIN TRATAMIENTO ----------
-const tienePendiente = (pid, excluir) => {
-  if (!pid) return false;
-  const base = C(pid);
-  const ids = new Set(D.clientes.filter((x) => x.id === pid || (base.dni && x.dni === base.dni)).map((x) => x.id));
-  return D.citas.some((c) => ids.has(c.pacienteId) && c.porDefinir && c.id !== excluir &&
-    !["cancelada", "reprogramada"].includes(c.estado));
-};
+// Mientras haya una evaluación sin tratamiento, no se agenda a nadie
+const tienePendiente = (pid, excluir) => D.citas.some((c) => c.porDefinir && c.id !== excluir &&
+  !["cancelada", "reprogramada"].includes(c.estado));
 
 function pendientesTratHTML() {
   const l = D.citas.filter((c) => c.porDefinir && !["cancelada", "reprogramada"].includes(c.estado))
@@ -1685,7 +1681,7 @@ function pendientesTratHTML() {
   if (!l.length) return "";
   return `<details class="caja" open><summary><strong>Evaluaciones sin tratamiento</strong> (${l.length})</summary>
     ${l.map((c) => `<div class="fila"><div class="crece"><strong>${esc(C(c.pacienteId).nombre)}</strong>
-      <div class="muted">${fDia(c.fecha)} · ${hora12(c.hora)} · no se le puede agendar otra cita hasta asignar el tratamiento</div></div>
+      <div class="muted">${fDia(c.fecha)} · ${hora12(c.hora)} · no se puede agendar a nadie hasta asignar este tratamiento</div></div>
       <button type="button" class="btn" data-asignar="${c.id}">Asignar tratamiento</button></div>`).join("")}
   </details>`;
 }
