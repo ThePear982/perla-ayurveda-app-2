@@ -403,18 +403,20 @@ const mesNombre = (mm) => new Date(mm + "-01T00:00").toLocaleDateString("es-PE",
 // Buscador de paquetes para vender; si no existe, permite crearlo ahí mismo
 function resPaqHTML() {
   const q = norm(textoPaq.trim());
-  const lista = q ? D.paquetes.filter((p) => norm(p.nombre).includes(q)) : D.paquetes;
-  const botones = lista.map((p) => `<button type="button" class="opc ${paqSel === p.id ? "sel" : ""}" data-selpaq="${p.id}">${esc(p.nombre)} <small>${p.sesiones} ses. · ${soles(p.precio)}</small></button>`).join("");
-  const elegido = paqObj() ? `<p class="muted">Elegido: <strong>${esc(paqObj().nombre)}</strong></p>` : '<p class="muted">Todavía no has elegido un paquete.</p>';
-  const crear = q && !lista.length ? `<div class="caja"><strong>No encontré "${esc(textoPaq.trim())}".</strong>
+  const elegido = paqObj() ? `<p class="muted">Elegido: <strong>${esc(paqObj().nombre)}</strong></p>` : "";
+  if (!q) return elegido;
+  const lista = D.paquetes.filter((p) => norm(p.nombre).includes(q)).slice(0, 8);
+  if (!lista.length) return `${elegido}<div class="caja"><strong>No encontré "${esc(textoPaq.trim())}".</strong>
       <p class="muted">Créalo aquí mismo y se usará en esta venta.</p>
       <div class="form" style="grid-template-columns:2fr 1fr 1fr">
         <label>Nombre<input id="nPaqNom" value="${esc(textoPaq.trim())}"></label>
         <label>Sesiones<input id="nPaqSes" type="number" min="1"></label>
         <label>Precio (S/)<input id="nPaqPre" type="number" min="0" step="0.5"></label>
       </div>
-      <button type="button" class="btn" data-crearpaq="1">Crear paquete y usarlo</button></div>` : "";
-  return `<div class="opciones">${botones}</div>${elegido}${crear}`;
+      <button type="button" class="btn" data-crearpaq="1">Crear paquete y usarlo</button></div>`;
+  return `${elegido}<div class="caja">${lista.map((p) => `<div class="fila click" data-selpaq="${p.id}" style="${paqSel === p.id ? "background:var(--soft)" : ""}">
+    <div class="crece"><strong>${esc(p.nombre)}</strong></div>
+    <span class="muted">${p.sesiones} ses. · ${soles(p.precio)}</span></div>`).join("")}</div>`;
 }
 
 // Resumen: paquetes vendidos por mes y paquete más vendido
@@ -428,13 +430,13 @@ function resumenPaquetesHTML() {
   });
   const meses = Object.keys(porMes).sort().reverse();
   const top = Object.entries(porPaq).sort((a, b) => b[1] - a[1]);
-  return `<section class="caja"><h3>Resumen de paquetes</h3>
+  return `<details class="caja"><summary><strong>Resumen de paquetes: ventas por mes y el más vendido</strong></summary>
     ${top.length ? `<p><strong>Paquete más vendido:</strong> ${esc(top[0][0])} (${top[0][1]} ventas)</p>` : ""}
     <div class="scroll"><table><thead><tr><th>Mes</th><th class="num">Paquetes vendidos</th><th class="num">Valor vendido</th></tr></thead><tbody>
     ${meses.map((m) => `<tr><td>${mesNombre(m)}</td><td class="num">${porMes[m].n}</td><td class="num">${soles(porMes[m].valor)}</td></tr>`).join("")}
     </tbody></table></div>
     ${top.length > 1 ? `<p class="muted">Ranking: ${top.slice(0, 5).map(([n, k]) => `${esc(n)} (${k})`).join(" · ")}</p>` : ""}
-  </section>`;
+  </details>`;
 }
 
 // Clientes: de qué distritos vienen
@@ -447,15 +449,15 @@ function distritosHTML() {
     grupos[k].n++;
   });
   const lista = Object.values(grupos).sort((a, b) => b.n - a.n);
-  if (!lista.length) return `<section class="caja"><h3>¿De dónde vienen tus clientes?</h3><div class="vacio">Aún no hay distritos registrados.</div></section>`;
+  if (!lista.length) return `<details class="caja" open><summary><strong>¿De dónde vienen tus clientes?</strong></summary><div class="vacio">Aún no hay distritos registrados.</div></details>`;
   const max = lista[0].n, N = D.clientes.length || 1;
-  return `<section class="caja"><h3>¿De dónde vienen tus clientes?</h3>
+  return `<details class="caja" open><summary><strong>¿De dónde vienen tus clientes?</strong></summary>
     ${lista.slice(0, 10).map((x) => `<div class="fila"><div class="crece"><strong>${esc(x.nombre)}</strong>
       <div class="barra"><span style="width:${Math.round(x.n / max * 100)}%"></span></div></div>
       <span class="muted">${x.n} clientes · ${Math.round(x.n / N * 100)}%</span></div>`).join("")}
     ${sin ? `<p class="muted">${sin} clientes no tienen distrito registrado.</p>` : ""}
     <p class="muted">La dirección es texto libre, por eso el análisis usa el distrito.</p>
-  </section>`;
+  </details>`;
 }
 
 // Ganancias: elegir desde qué mes hasta qué mes
@@ -927,10 +929,10 @@ const vistas = {
     D.atenciones.filter((a) => !a.pacienteId && a.nombre).forEach((a) => { sinVincular[a.nombre] = (sinVincular[a.nombre] || 0) + 1; });
     const nSin = Object.keys(sinVincular).length;
     return `<h2>Clientes</h2>
+    ${distritosHTML()}
     <div class="chips">${chip("todos", "Todos", D.clientes.length)}${chip("semana", "Nuevos esta semana", cuenta("semana"))}${chip("mes", "Nuevos este mes", cuenta("mes"))}${chip("anio", "Nuevos este año", cuenta("anio"))}</div>
     <input class="buscador" id="buscar" placeholder="Buscar por nombre, DNI o teléfono" value="${esc(textoBusqueda)}">
     <div class="caja" id="lista">${listaClientesHTML()}</div>
-    ${distritosHTML()}
     <details class="caja"><summary>Registrar cliente nuevo</summary>${formCliente(false)}</details>
     ${nSin ? `<details class="caja"><summary>${nSin} personas atendidas sin registro de cliente</summary>
       <p class="muted">Aparecen en tus atenciones pero no en el formulario. Su dinero sí cuenta en Ganancias.</p>
@@ -954,6 +956,7 @@ const vistas = {
     const listo = D.clientes.length;
     const ventas = D.ventas.slice().reverse();
     return `<h2>Paquetes</h2>
+    ${resumenPaquetesHTML()}
     <h3>Vender paquete</h3>
     ${listo ? `<form class="form" id="fVenta">
       <label>Cliente<select name="pacienteId" required>${clientesOrdenados().map((c) => `<option value="${c.id}" ${c.id === preVenta ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}</select></label>
@@ -967,8 +970,6 @@ const vistas = {
       <button class="btn">Vender paquete</button>
     </form>` : '<div class="caja vacio">Primero registra al menos un cliente.</div>'}
     <div class="caja">${ventas.length ? ventas.map(filaVenta).join("") : '<div class="vacio">Aún no hay paquetes vendidos.</div>'}</div>
-
-    ${resumenPaquetesHTML()}
 
     <div class="seccion"><h2>Catálogo de paquetes</h2>
     ${importHTML("paq")}
