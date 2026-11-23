@@ -374,20 +374,67 @@ function importarPaquetes(txt) {
 }
 
 function ejecutarImport(k, txt) {
-  const r = k === "srv" ? importarServicios(txt) : importarPaquetes(txt);
+  const r = k === "srv" ? importarServicios(txt) : k === "ant" ? importarAntiguos(txt) : importarPaquetes(txt);
   guardar();
-  aviso(r.nuevos + (k === "srv" ? " servicios nuevos" : " paquetes nuevos") + (r.omitidos.length ? " · " + r.omitidos.length + " omitidos" : ""));
+  aviso(r.nuevos + (k === "srv" ? " servicios nuevos" : k === "ant" ? " atenciones antiguas nuevas" + (r.vinculados ? " (" + r.vinculados + " vinculadas a clientes)" : "") : " paquetes nuevos") + (r.omitidos.length ? " · " + r.omitidos.length + " omitidos" : ""));
   if (r.omitidos.length) alert("Estos no se importaron:\n\n" + r.omitidos.slice(0, 10).join("\n") + (r.omitidos.length > 10 ? "\n…" : ""));
   render();
 }
 
+// ---------- SERVICIOS ANTIGUOS DESDE LA HOJA DE VENTAS ----------
+// Columnas: FECHA, NOMBRES Y APELLIDO, DNI, SERVICIO, COSTO, DESCUENTO, TOTAL, OBSERVACION, P. EFECTIVO, P. YAPE
+function fechaCSV(t) {
+  const m = String(t || "").trim().match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
+  if (!m) return "";
+  const y = m[3].length === 2 ? "20" + m[3] : m[3];
+  return y + "-" + pad(+m[2]) + "-" + pad(+m[1]);
+}
+
+function importarAntiguos(txt) {
+  const sep = txt.includes("\t") ? "\t" : (txt.split("\n")[0].includes(";") ? ";" : ",");
+  const filas = parseCSV(txt, sep);
+  const hi = filas.findIndex((f) => f.some((c) => norm(c).trim() === "fecha") && f.some((c) => /servicio/.test(norm(c))));
+  if (hi < 0) throw new Error("No encontré la fila de títulos (FECHA, SERVICIO...). Revisa que el archivo sea la hoja de ventas.");
+  const cab = filas[hi].map((c) => norm(c).trim());
+  const col = (re) => cab.findIndex((h) => re.test(h));
+  const cFecha = col(/^fecha$/), cNom = col(/nombre/), cDni = col(/^dni/), cSrv = col(/servicio/),
+    cCosto = col(/^costo/), cDesc = col(/descuento/), cTotal = col(/^total/), cObs = col(/observ/),
+    cEfe = col(/efectivo/), cYape = col(/yape/);
+  const clave = (fecha, nombre, srv, total) => [fecha, norm(nombre), norm(srv), total].join("|");
+  const existentes = new Set(D.atenciones.map((a) => clave(a.fecha, a.pacienteId ? C(a.pacienteId).nombre : (a.nombre || ""), a.servicio, +a.total || 0)));
+  let nuevos = 0, vinculados = 0; const omitidos = [];
+  filas.slice(hi + 1).forEach((f) => {
+    const srv = String(f[cSrv] || "").trim();
+    if (!srv) return;
+    const fecha = fechaCSV(f[cFecha]);
+    if (!fecha) { omitidos.push(srv + " (sin fecha válida)"); return; }
+    const nombre = String(f[cNom] || "").trim().replace(/\s+/g, " ");
+    const dni = String(f[cDni] || "").replace(/\D/g, "");
+    let cli = dni ? D.clientes.find((c) => c.dni === dni) : null;
+    if (!cli && nombre) cli = D.clientes.find((c) => norm(c.nombre) === norm(nombre));
+    if (!cli && !nombre) { omitidos.push(srv + " (sin nombre)"); return; }
+    let total = aNumero(f[cTotal]);
+    if (isNaN(total)) total = Math.max(0, (aNumero(f[cCosto]) || 0) - (aNumero(f[cDesc]) || 0));
+    const pago = aNumero(f[cEfe]) > 0 ? "Efectivo" : aNumero(f[cYape]) > 0 ? "Yape" : "";
+    const k = clave(fecha, cli ? cli.nombre : nombre, srv, total);
+    if (existentes.has(k)) return;
+    const reg = { id: uid(), fecha, servicio: srv, tipo: /compra/i.test(srv) ? "compra" : "terapia",
+      total, pago, obs: String(f[cObs] || "").trim() };
+    if (cli) { reg.pacienteId = cli.id; vinculados++; } else reg.nombre = nombre;
+    D.atenciones.push(reg);
+    existentes.add(k);
+    nuevos++;
+  });
+  return { nuevos, vinculados, omitidos };
+}
+
 const importHTML = (k) => {
-  const ok = puede(k === "srv" ? "servicios" : "paquetes");
+  const ok = puede(k === "srv" ? "servicios" : k === "ant" ? "clientes" : "paquetes");
   if (!ok) return "";
-  const cosa = k === "srv" ? "servicios" : "paquetes";
+  const cosa = k === "srv" ? "servicios" : k === "ant" ? "servicios antiguos" : "paquetes";
   const ayuda = k === "srv"
     ? "Usa las columnas TRATAMIENTOS y COSTOS de la hoja DATOS."
-    : "Usa la lista de paquetes de la hoja DATOS: el nombre con las sesiones entre paréntesis y el precio al lado.";
+    : k === "ant" ? "Usa la hoja de ventas tal como la descargas: FECHA, NOMBRES Y APELLIDO, DNI, SERVICIO, TOTAL, OBSERVACION, P. EFECTIVO, P. YAPE." : "Usa la lista de paquetes de la hoja DATOS: el nombre con las sesiones entre paréntesis y el precio al lado.";
   return `<details class="caja"><summary>Importar ${cosa} desde la hoja</summary>
     <p class="muted">${ayuda} Descarga la hoja como CSV (Archivo → Descargar → CSV) o pega las filas copiadas.</p>
     <input type="file" data-impfile="${k}" accept=".csv,text/csv,text/plain">
@@ -1046,6 +1093,7 @@ const vistas = {
     <div class="chips">${chip("todos", "Todos", D.clientes.length)}${chip("semana", "Nuevos esta semana", cuenta("semana"))}${chip("mes", "Nuevos este mes", cuenta("mes"))}${chip("anio", "Nuevos este año", cuenta("anio"))}${distritosHTML()}</div>
     ${canalesHTML()}
     ${reactivarHTML()}
+    ${importHTML("ant")}
     <input class="buscador" id="buscar" placeholder="Buscar por nombre, DNI o teléfono" value="${esc(textoBusqueda)}">
     ${filtroDist ? `<p class="muted">Mostrando clientes de <strong>${esc((D.clientes.find((c) => norm(c.distrito).trim() === filtroDist) || {}).distrito || "")}</strong>
       · <button type="button" class="btn secundario" data-dist="">Quitar filtro</button></p>` : ""}
