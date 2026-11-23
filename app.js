@@ -1167,6 +1167,7 @@ const vistas = {
     <div class="chips">${chip("todos", "Todos", D.clientes.length)}${chip("semana", "Nuevos esta semana", cuenta("semana"))}${chip("mes", "Nuevos este mes", cuenta("mes"))}${chip("anio", "Nuevos este año", cuenta("anio"))}${distritosHTML()}</div>
     ${canalesHTML()}
     ${reactivarHTML()}
+    ${duplicadosHTML()}
     ${importHTML("ant")}
     <input class="buscador" id="buscar" placeholder="Buscar por nombre, DNI o teléfono" value="${esc(textoBusqueda)}">
     ${filtroDist ? `<p class="muted">Mostrando clientes de <strong>${esc((D.clientes.find((c) => norm(c.distrito).trim() === filtroDist) || {}).distrito || "")}</strong>
@@ -1330,7 +1331,7 @@ function detalleCliente(id) {
   const vs = D.ventas.filter((v) => v.pacienteId === id);
   const dato = (t, v) => `<div><span>${t}</span>${esc(v || "—")}</div>`;
   return `<button class="btn secundario" data-volver="1" style="margin-bottom:14px">← Volver a clientes</button>
-  <h2>${esc(c.nombre)} <button type="button" class="btn secundario" data-editcli="${c.id}" style="font-size:14px;vertical-align:middle">Editar datos</button></h2>
+  <h2>${esc(c.nombre)} <button type="button" class="btn secundario" data-editcli="${c.id}" style="font-size:14px;vertical-align:middle">Editar datos</button> <button type="button" class="btn secundario" data-unir="${c.id}" style="font-size:14px;vertical-align:middle">Unir con otra ficha</button></h2>
   <div class="tarjetas">
     <div class="tarjeta"><span class="muted">Terapias realizadas</span><div class="cifra">${ter}</div></div>
     <div class="tarjeta"><span class="muted">Paquetes comprados</span><div class="cifra">${vs.length}</div></div>
@@ -1621,9 +1622,62 @@ function abrirMiClave() {
 }
 
 /* ---------- HOY, MAÑANA E IMPRESIÓN ---------- */
+// ---------- UNIR FICHAS DUPLICADAS ----------
+let unirOrigen = "", unirBusca = "";
+
+function unirResHTML() {
+  const q = norm(unirBusca.trim());
+  if (q.length < 2) return '<div class="vacio">Escribe el nombre, DNI o teléfono de la ficha correcta.</div>';
+  const l = D.clientes.filter((c) => c.id !== unirOrigen && norm(c.nombre + " " + c.dni + " " + c.telefono).includes(q)).slice(0, 8);
+  if (!l.length) return '<div class="vacio">No encontré esa ficha.</div>';
+  return l.map((c) => `<button type="button" class="opc lista" data-unirdest="${c.id}"><strong>${esc(c.nombre)}</strong> <span class="muted">DNI ${esc(c.dni)}</span></button>`).join("");
+}
+
+function abrirUnir(id) {
+  unirOrigen = id; unirBusca = "";
+  abrirDialogo(`<div class="modal-top"><h2>Unir con otra ficha</h2><button type="button" class="btn secundario" data-cerrar="1">Cerrar</button></div>
+    <p class="muted">La ficha de <strong>${esc(C(id).nombre)}</strong> se va a eliminar. Sus citas, paquetes, atenciones y registros de dolor pasan a la ficha que elijas.</p>
+    <input id="unirBusca" class="buscador" placeholder="Busca la ficha correcta (nombre, DNI o teléfono)" autocomplete="off">
+    <div id="unirRes">${unirResHTML()}</div>`);
+}
+
+function unirClientes(origenId, destinoId) {
+  const o = C(origenId), d = C(destinoId);
+  if (!o || !d || origenId === destinoId) return;
+  D.citas.forEach((c) => { if (c.pacienteId === o.id) c.pacienteId = d.id; });
+  D.ventas.forEach((v) => { if (v.pacienteId === o.id) v.pacienteId = d.id; });
+  D.atenciones.forEach((a) => { if (a.pacienteId === o.id) a.pacienteId = d.id; });
+  ["sexo", "nacimiento", "telefono", "correo", "direccion", "distrito", "origen", "dni"].forEach((k) => {
+    if (!d[k] && o[k]) d[k] = o[k];
+  });
+  d.ficha = { ...(o.ficha || {}), ...(d.ficha || {}) };
+  if (!d.ficha.antecedentes && o.ficha && o.ficha.antecedentes) d.ficha.antecedentes = o.ficha.antecedentes;
+  d.ficha.eva = [...((d.ficha && d.ficha.eva) || []), ...((o.ficha && o.ficha.eva) || [])];
+  D.clientes = D.clientes.filter((c) => c.id !== o.id);
+  clienteSel = d.id;
+  guardar(); cerrarModal(); aviso("Fichas unidas en " + d.nombre); render();
+}
+
+function duplicadosHTML() {
+  const g = {};
+  D.clientes.forEach((c) => { const k = norm(c.nombre).trim(); (g[k] ||= []).push(c); });
+  const grupos = Object.values(g).filter((l) => l.length > 1);
+  if (!grupos.length) return "";
+  return `<details class="caja" open><summary><strong>Posibles fichas duplicadas</strong> (${grupos.length})</summary>
+    ${grupos.map((l) => `<div style="border-bottom:1px solid var(--line);padding:6px 0">${l.map((c) => `<div class="fila click" data-cli="${c.id}">
+      <div class="crece"><strong>${esc(c.nombre)}</strong><div class="muted">DNI ${esc(c.dni || "sin DNI")} · ${esc(c.telefono || "sin teléfono")}</div></div>
+      <span class="muted">Abrir ficha</span></div>`).join("")}</div>`).join("")}
+  </details>`;
+}
+
 // ---------- EVALUACIONES SIN TRATAMIENTO ----------
-const tienePendiente = (pid, excluir) => !!pid && D.citas.some((c) => c.pacienteId === pid && c.porDefinir &&
-  c.id !== excluir && !["cancelada", "reprogramada"].includes(c.estado));
+const tienePendiente = (pid, excluir) => {
+  if (!pid) return false;
+  const base = C(pid);
+  const ids = new Set(D.clientes.filter((x) => x.id === pid || (base.dni && x.dni === base.dni)).map((x) => x.id));
+  return D.citas.some((c) => ids.has(c.pacienteId) && c.porDefinir && c.id !== excluir &&
+    !["cancelada", "reprogramada"].includes(c.estado));
+};
 
 function pendientesTratHTML() {
   const l = D.citas.filter((c) => c.porDefinir && !["cancelada", "reprogramada"].includes(c.estado))
@@ -1864,6 +1918,15 @@ document.addEventListener("click", async (e) => {
     const a = D.atenciones.find((x) => x.id === d("[data-delant]", "delant"));
     if (a && await confirmar(`¿Quitar el servicio de ${esc(nombreAt(a))} del ${fCorta(a.fecha)}?`, "Sí, quitar")) {
       D.atenciones = D.atenciones.filter((x) => x !== a); guardar(); render();
+    }
+    return;
+  }
+  if (q("[data-unir]")) { abrirUnir(d("[data-unir]", "unir")); return; }
+  if (q("[data-unirdest]")) {
+    const dest = d("[data-unirdest]", "unirdest");
+    const o = C(unirOrigen), t = C(dest);
+    if (await confirmar(`¿Unir ${esc(o.nombre)} con ${esc(t.nombre)}? La ficha de ${esc(o.nombre)} se eliminará. No se puede deshacer.`, "Sí, unir")) {
+      unirClientes(unirOrigen, dest);
     }
     return;
   }
@@ -2117,6 +2180,7 @@ document.addEventListener("input", (e) => {
   if (t.id === "antHora") { antHora = t.value; return; }
   if (t.id === "asigBusca") { asigBusca = t.value; $("#asigRes").innerHTML = asigResHTML(); return; }
   if (t.id === "asigCosto") { asigCosto = t.value; return; }
+  if (t.id === "unirBusca") { unirBusca = t.value; $("#unirRes").innerHTML = unirResHTML(); return; }
   if (!nc) return;
   if (t.id === "ncBusca") { nc.q = t.value; $("#ncRes").innerHTML = resCli(); }
   else if (t.id === "ncBuscaSrv") { nc.qs = t.value; $("#ncResSrv").innerHTML = resSrv(); }
