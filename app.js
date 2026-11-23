@@ -62,7 +62,7 @@ const RANGOS = () => {
 
 /* ---------- SECCIONES Y PERMISOS ---------- */
 const SECCIONES = [["hoy", "Hoy"], ["sala", "Sala en vivo"], ["inicio", "Resumen"], ["citas", "Citas"],
-  ["clientes", "Clientes"], ["nuevos", "Pacientes nuevos"], ["servicios", "Servicios"], ["paquetes", "Paquetes"], ["porfinalizar", "Por finalizar"], ["finalizaron", "Finalizaron"], ["ganancias", "Ganancias"]];
+  ["clientes", "Clientes"], ["antiguos", "Servicios antiguos"], ["nuevos", "Pacientes nuevos"], ["servicios", "Servicios"], ["paquetes", "Paquetes"], ["porfinalizar", "Por finalizar"], ["finalizaron", "Finalizaron"], ["ganancias", "Ganancias"]];
 const ETQ_SEC = Object.fromEntries([...SECCIONES, ["configuracion", "Configuración"]]);
 
 let USUARIOS = [];
@@ -732,9 +732,9 @@ const ocupaHorario = (c) => !LIBRES_HORARIO.includes(c.estado);
 const reservaSesion = (c) => !!c.ventaId && (["pendiente", "llego", "atendida"].includes(c.estado) ||
   (c.estado === "novino" && D.ajustes.novinoConsume));
 const usadasDe = (v) => D.citas.filter((c) => c.ventaId === v.id &&
-  (c.estado === "atendida" || (c.estado === "novino" && D.ajustes.novinoConsume))).length;
+  (c.estado === "atendida" || (c.estado === "novino" && D.ajustes.novinoConsume))).length + D.atenciones.filter((a) => a.ventaId === v.id).length;
 const programadasDe = (v) => D.citas.filter((c) => c.ventaId === v.id && ["pendiente", "llego"].includes(c.estado)).length;
-const restantes = (v) => v.sesiones - D.citas.filter((c) => c.ventaId === v.id && reservaSesion(c)).length;
+const restantes = (v) => v.sesiones - D.citas.filter((c) => c.ventaId === v.id && reservaSesion(c)).length - D.atenciones.filter((a) => a.ventaId === v.id).length;
 const pagado = (v) => (v.abonos || []).reduce((s, a) => s + (+a.monto || 0), 0);
 const saldoDe = (v) => Math.max(0, (+v.precio || 0) - pagado(v));
 const vencido = (v) => v.vence < hoy();
@@ -1599,6 +1599,120 @@ function abrirMiClave() {
 }
 
 /* ---------- HOY, MAÑANA E IMPRESIÓN ---------- */
+// ---------- SERVICIOS ANTIGUOS (sección propia) ----------
+let antFecha = hoy(), antPac = "", antNombre = "", antBusca = "", antTipo = "sesion", antSrv = "", antSrvBusca = "",
+  antPaq = "", antPaqBusca = "", antCosto = "", antPago = "Efectivo", antVenta = "";
+const PAGOS_ANT = ["Efectivo", "Yape", "Plin", "Transferencia", "Tarjeta"];
+
+function antResHTML() {
+  const q = norm(antBusca.trim());
+  if (q.length < 2) return "";
+  const l = D.clientes.filter((c) => norm(c.nombre + " " + c.dni + " " + c.telefono).includes(q)).slice(0, 6);
+  if (l.length) return l.map((c) => `<button type="button" class="opc lista" data-antpac="${c.id}"><strong>${esc(c.nombre)}</strong> <span class="muted">DNI ${esc(c.dni)}</span></button>`).join("");
+  if (/\d/.test(antBusca)) return '<div class="vacio">No está registrado. Regístralo primero en Clientes para elegirlo aquí.</div>';
+  return '<div class="vacio">No está registrado. <button type="button" class="btn secundario" data-antnombre="1">Usar solo este nombre</button></div>';
+}
+
+function antSrvResHTML() {
+  const q = norm(antSrvBusca.trim());
+  const l = q ? D.servicios.filter((s) => norm(s.nombre).includes(q)).slice(0, 8) : srvFrecuentes().slice(0, 4);
+  if (!l.length) return '<div class="vacio">No hay servicios con ese nombre.</div>';
+  return `<div class="opciones">${l.map((s) => `<button type="button" class="opc ${antSrv === s.id ? "sel" : ""}" data-antsrv="${s.id}">${esc(s.nombre)} <small>${soles(s.precio)}</small></button>`).join("")}</div>`;
+}
+
+function antPaqResHTML() {
+  const q = norm(antPaqBusca.trim());
+  const l = q ? D.paquetes.filter((p) => norm(p.nombre).includes(q)).slice(0, 8) : D.paquetes.slice(0, 6);
+  if (!l.length) return '<div class="vacio">No hay paquetes con ese nombre. Créalo en Paquetes.</div>';
+  return `<div class="opciones">${l.map((p) => `<button type="button" class="opc ${antPaq === p.id ? "sel" : ""}" data-antpaq="${p.id}">${esc(p.nombre)} <small>${p.sesiones} ses. · ${soles(p.precio)}</small></button>`).join("")}</div>`;
+}
+
+function guardarAntiguo() {
+  const pac = antPac ? C(antPac) : null;
+  if (!pac && !antNombre) { alert("Elige primero el paciente."); return; }
+  if (antTipo === "paquete") {
+    const p = D.paquetes.find((x) => x.id === antPaq);
+    if (!p) { alert("Elige el paquete que compró."); return; }
+    if (!pac) { alert("Para vender un paquete, el paciente tiene que estar registrado en Clientes."); return; }
+    const monto = antCosto === "" ? p.precio : (+antCosto || 0);
+    D.ventas.push({ id: uid(), pacienteId: pac.id, nombre: p.nombre, sesiones: p.sesiones, precio: monto, fecha: antFecha,
+      vence: sumarDias(antFecha, D.ajustes.vigenciaDias), abonos: [{ fecha: antFecha, monto, metodo: antPago }] });
+    aviso("Paquete registrado: " + p.nombre);
+  } else {
+    const srv = D.servicios.find((x) => x.id === antSrv);
+    if (!srv) { alert("Elige el servicio que realizó."); return; }
+    const v = antVenta ? D.ventas.find((x) => x.id === antVenta) : null;
+    if (v && restantes(v) <= 0) { alert("Ese paquete ya no tiene sesiones libres."); return; }
+    const monto = v ? 0 : (antCosto === "" ? srv.precio : (+antCosto || 0));
+    const reg = { id: uid(), fecha: antFecha, servicio: srv.nombre, tipo: "terapia", total: monto,
+      pago: v ? "Paquete" : antPago, obs: "" };
+    if (pac) reg.pacienteId = pac.id; else reg.nombre = antNombre;
+    if (v) reg.ventaId = v.id;
+    D.atenciones.push(reg);
+    aviso("Servicio registrado" + (pac ? ": " + pac.nombre : ""));
+  }
+  // Se limpian los datos del paciente; la fecha se queda
+  antPac = ""; antNombre = ""; antBusca = ""; antSrv = ""; antSrvBusca = "";
+  antPaq = ""; antPaqBusca = ""; antCosto = ""; antVenta = "";
+  guardar();
+  render();
+}
+
+vistas.antiguos = function () {
+  const pac = antPac ? C(antPac) : null;
+  const ventas = pac ? ventasActivas(pac.id) : [];
+  const pagoSel = `<label>Pago<select id="antPago">${PAGOS_ANT.map((p) => `<option ${antPago === p ? "selected" : ""}>${p}</option>`).join("")}</select></label>`;
+  const pacHTML = pac
+    ? `<div class="fila"><div class="crece"><strong>${esc(pac.nombre)}</strong><div class="muted">DNI ${esc(pac.dni)}</div></div><button type="button" class="btn secundario" data-antcambiar="1">Cambiar</button></div>`
+    : antNombre
+      ? `<div class="fila"><div class="crece"><strong>${esc(antNombre)}</strong><div class="muted">Sin registro (solo nombre)</div></div><button type="button" class="btn secundario" data-antcambiar="1">Cambiar</button></div>`
+      : `<input id="antBusca" class="buscador" placeholder="Escribe el DNI o el nombre del paciente" autocomplete="off" value="${esc(antBusca)}"><div id="antRes">${antResHTML()}</div>`;
+  const tipos = `<div class="opciones">
+      <button type="button" class="opc ${antTipo === "sesion" ? "sel" : ""}" data-anttipo="sesion">Sesión o servicio</button>
+      <button type="button" class="opc ${antTipo === "paquete" ? "sel" : ""}" data-anttipo="paquete">Compró un paquete</button></div>`;
+  let cuerpo;
+  if (antTipo === "paquete") {
+    const elegido = D.paquetes.find((p) => p.id === antPaq);
+    cuerpo = `<label>Buscar paquete<input id="antPaqBusca" class="buscador" placeholder="Escribe el nombre del paquete" autocomplete="off" value="${esc(antPaqBusca)}"></label>
+      <div id="antPaqRes">${antPaqResHTML()}</div>
+      ${elegido ? `<p class="muted">Elegido: <strong>${esc(elegido.nombre)}</strong></p>` : ""}
+      <div class="form" style="grid-template-columns:1fr 1fr">
+        <label>Costo cobrado (S/)<input id="antCosto" type="number" min="0" step="0.5" value="${antCosto}" placeholder="${elegido ? elegido.precio : ""}"></label>
+        ${pagoSel}
+      </div>`;
+  } else {
+    const elegido = D.servicios.find((s) => s.id === antSrv);
+    cuerpo = `<label>Buscar servicio<input id="antSrvBusca" class="buscador" placeholder="Escribe el servicio (ej. masaje, terapia…)" autocomplete="off" value="${esc(antSrvBusca)}"></label>
+      <div id="antSrvRes">${antSrvResHTML()}</div>
+      ${elegido ? `<p class="muted">Elegido: <strong>${esc(elegido.nombre)}</strong></p>` : ""}
+      ${ventas.length ? `<label>¿Esta sesión salió de un paquete?<select id="antVenta"><option value="">No, pago normal</option>${ventas.map((v) => `<option value="${v.id}" ${antVenta === v.id ? "selected" : ""}>${esc(v.nombre)} · ${restantes(v)} libres</option>`).join("")}</select></label>` : ""}
+      <div class="form" style="grid-template-columns:1fr 1fr">
+        ${antVenta ? '<p class="muted">Se descuenta una sesión del paquete. No se cobra de nuevo.</p>'
+          : `<label>Costo (S/)<input id="antCosto" type="number" min="0" step="0.5" value="${antCosto}"></label>${pagoSel}`}
+      </div>`;
+  }
+  const dia = D.atenciones.filter((a) => a.fecha === antFecha).slice().reverse();
+  const tot = dia.reduce((s, a) => s + (+a.total || 0), 0);
+  return `<h2>Servicios antiguos</h2>
+    <div class="form" style="grid-template-columns:260px 1fr;align-items:center">
+      <label>Fecha de los servicios<input type="date" id="antFecha" value="${antFecha}"></label>
+      <p class="muted">La fecha se queda igual para todos los pacientes de ese día. Cámbiala solo cuando pases a otro día.</p>
+    </div>
+    <section class="caja">
+      <h3>1. Paciente</h3>${pacHTML}
+      <h3>2. ¿Qué hizo?</h3>${tipos}
+      ${cuerpo}
+      <button type="button" class="btn gran grande" data-antguardar="1">Guardar y seguir con el siguiente</button>
+    </section>
+    <section class="caja"><h3>Registrados el ${fDia(antFecha)} · ${dia.length} · ${soles(tot)}</h3>
+      ${dia.length ? dia.slice(0, 60).map((a) => `<div class="fila"><div class="crece"><strong>${esc(nombreAt(a))}</strong>
+        <div class="muted">${esc(a.servicio || "")} · ${a.ventaId ? "Sesión de paquete" : esc(a.pago || "")}</div></div>
+        <span class="monto">${a.total ? soles(a.total) : "—"}</span>
+        <button type="button" class="btn peligro" data-delant="${a.id}">Quitar</button></div>`).join("")
+        : '<div class="vacio">Aún no has registrado servicios para este día.</div>'}
+    </section>`;
+};
+
 vistas.hoy = function () {
   const h = hoy(), m = manana(), lh = citasDe(h), lm = citasDe(m);
   const faltan = lm.filter((c) => !c.recordado && telWA(C(c.pacienteId).telefono)).length;
@@ -1647,6 +1761,20 @@ document.addEventListener("click", async (e) => {
     const k = d("[data-dist]", "dist");
     filtroDist = k && filtroDist !== k ? k : "";
     render();
+    return;
+  }
+  if (q("[data-antpac]")) { antPac = d("[data-antpac]", "antpac"); antNombre = ""; antBusca = ""; render(); return; }
+  if (q("[data-antnombre]")) { antNombre = antBusca.trim(); antBusca = ""; render(); return; }
+  if (q("[data-antcambiar]")) { antPac = ""; antNombre = ""; antBusca = ""; render(); return; }
+  if (q("[data-anttipo]")) { antTipo = d("[data-anttipo]", "anttipo"); antSrv = ""; antPaq = ""; antVenta = ""; antCosto = ""; render(); return; }
+  if (q("[data-antsrv]")) { antSrv = d("[data-antsrv]", "antsrv"); antCosto = String(S(antSrv).precio || ""); render(); return; }
+  if (q("[data-antpaq]")) { antPaq = d("[data-antpaq]", "antpaq"); const p = D.paquetes.find((x) => x.id === antPaq); antCosto = p ? String(p.precio) : ""; render(); return; }
+  if (q("[data-antguardar]")) { guardarAntiguo(); return; }
+  if (q("[data-delant]")) {
+    const a = D.atenciones.find((x) => x.id === d("[data-delant]", "delant"));
+    if (a && await confirmar(`¿Quitar el servicio de ${esc(nombreAt(a))} del ${fCorta(a.fecha)}?`, "Sí, quitar")) {
+      D.atenciones = D.atenciones.filter((x) => x !== a); guardar(); render();
+    }
     return;
   }
   if (q("[data-selpaq]")) {
@@ -1882,6 +2010,10 @@ document.addEventListener("input", (e) => {
   if (t.id === "buscar") { textoBusqueda = t.value; $("#lista").innerHTML = listaClientesHTML(); return; }
   if (t.id === "buscarSrv") { textoSrv = t.value; $("#listaSrv").innerHTML = listaSrvHTML(); return; }
   if (t.id === "buscaPaq") { textoPaq = t.value; $("#resPaq").innerHTML = resPaqHTML(); return; }
+  if (t.id === "antBusca") { antBusca = t.value; $("#antRes").innerHTML = antResHTML(); return; }
+  if (t.id === "antSrvBusca") { antSrvBusca = t.value; $("#antSrvRes").innerHTML = antSrvResHTML(); return; }
+  if (t.id === "antPaqBusca") { antPaqBusca = t.value; $("#antPaqRes").innerHTML = antPaqResHTML(); return; }
+  if (t.id === "antCosto") { antCosto = t.value; return; }
   if (!nc) return;
   if (t.id === "ncBusca") { nc.q = t.value; $("#ncRes").innerHTML = resCli(); }
   else if (t.id === "ncBuscaSrv") { nc.qs = t.value; $("#ncResSrv").innerHTML = resSrv(); }
@@ -1908,6 +2040,9 @@ document.addEventListener("change", (e) => {
     if (c) { c.recurso = t.value; guardar(); render(); }
     return;
   }
+  if (t.id === "antFecha" && t.value) { antFecha = t.value; return render(); }
+  if (t.id === "antVenta") { antVenta = t.value; return render(); }
+  if (t.id === "antPago") { antPago = t.value; return; }
   if (t.dataset.mes) { if (t.dataset.mes === "desde") mesDesde = t.value; else mesHasta = t.value; return render(); }
   if (t.id === "filtro") { filtroCitas = t.value; return render(); }
   if (t.id === "impFile" && t.files[0]) return importar(t.files[0]);
